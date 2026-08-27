@@ -610,11 +610,11 @@ app.post('/api/ai/insight', async (req, res) => {
 
   const durationMin = Math.round(session_duration / 60);
 
-  // 1. Attempt Groq API (Strictly Free Tier Models: llama-3.3-70b-versatile / llama-3.1-8b-instant)
+  // 1. Attempt Groq API (Iterate across standard free tier models: llama-3.1-8b-instant, llama-3.3-70b-specdec, llama3-8b-8192, gemma2-9b-it)
   if (process.env.GROQ_API_KEY) {
-    try {
-      const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-      const prompt = `You are an academic research assistant for student engagement proxies in educational sessions.
+    const groqCandidateModels = ['llama-3.1-8b-instant', 'llama3-8b-8192', 'llama-3.3-70b-specdec', 'gemma2-9b-it'];
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    const prompt = `You are an academic research assistant for student engagement proxies in educational sessions.
 Analyze these anonymized, aggregated numerical metrics from a ${durationMin}-minute session:
 - Average Attention/Engagement Proxy Score: ${average_attention_score}/100
 - Face Presence Ratio: ${(face_presence * 100).toFixed(1)}%
@@ -636,59 +636,68 @@ Provide your response in valid JSON with these exact keys:
   "recommendations": ["Actionable pedagogical suggestion 1", "Actionable pedagogical suggestion 2", "Actionable pedagogical suggestion 3"]
 }`;
 
-      const chatCompletion = await groq.chat.completions.create({
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are a rigorous educational analytics assistant. You evaluate student engagement solely from aggregated telemetry proxy metrics. Always return clean JSON without markdown code blocks.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        model: 'llama-3.3-70b-versatile',
-        response_format: { type: 'json_object' },
-        temperature: 0.2,
-        max_tokens: 650,
-      });
-
-      const rawText = chatCompletion.choices[0]?.message?.content?.trim();
-      if (rawText) {
-        const parsed = JSON.parse(rawText);
-        insightResult = {
-          id: 'ins_' + Date.now(),
-          session_id: session_id || 'unassigned',
-          summary: parsed.summary || insightResult.summary,
-          overall_pattern: parsed.overall_pattern || insightResult.overall_pattern,
-          notable_periods: parsed.notable_periods || insightResult.notable_periods,
-          distraction_analysis: parsed.distraction_analysis || insightResult.distraction_analysis,
-          recommendations: parsed.recommendations || [
-            'Incorporate interactive polling at midpoint.',
-            'Break lectures longer than 25 minutes into micro-segments.',
+    for (const modelName of groqCandidateModels) {
+      if (insightResult.summary) break;
+      try {
+        const chatCompletion = await groq.chat.completions.create({
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are a rigorous educational analytics assistant. You evaluate student engagement solely from aggregated telemetry proxy metrics. Always return clean JSON without markdown code blocks.',
+            },
+            {
+              role: 'user',
+              content: prompt,
+            },
           ],
-          created_at: new Date().toISOString(),
-          provider: 'groq (llama-3.3-70b-free)',
-        };
+          model: modelName,
+          response_format: { type: 'json_object' },
+          temperature: 0.2,
+          max_tokens: 650,
+        });
+
+        const rawText = chatCompletion.choices[0]?.message?.content?.trim();
+        if (rawText) {
+          const parsed = JSON.parse(rawText);
+          insightResult = {
+            id: 'ins_' + Date.now(),
+            session_id: session_id || 'unassigned',
+            summary: parsed.summary || insightResult.summary,
+            overall_pattern: parsed.overall_pattern || insightResult.overall_pattern,
+            notable_periods: parsed.notable_periods || insightResult.notable_periods,
+            distraction_analysis: parsed.distraction_analysis || insightResult.distraction_analysis,
+            recommendations: parsed.recommendations || [
+              'Incorporate interactive polling at midpoint.',
+              'Break lectures longer than 25 minutes into micro-segments.',
+            ],
+            created_at: new Date().toISOString(),
+            provider: `groq (${modelName})`,
+          };
+          break;
+        }
+      } catch (err: any) {
+        // Silently try next model candidate if model not found
+        if (!err?.message?.includes('model_not_found') && !err?.message?.includes('does not exist')) {
+          console.warn(`Groq (${modelName}) failed:`, err?.message);
+        }
       }
-    } catch (err: any) {
-      console.warn('Groq API call fell back to secondary engine:', err?.message);
     }
   }
 
-  // 2. Attempt Google GenAI API (Gemini 3.7 Flash) if Groq did not populate
+  // 2. Attempt Google GenAI API with resilient multi-model failover (gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-flash)
   if (!insightResult.summary && process.env.GEMINI_API_KEY) {
-    try {
-      const ai = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
+    const geminiCandidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.7-flash'];
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
         },
-      });
-      const prompt = `You are an academic research assistant for student engagement proxies in educational sessions.
+      },
+    });
+
+    const prompt = `You are an academic research assistant for student engagement proxies in educational sessions.
 Analyze these anonymized, aggregated numerical metrics from a ${durationMin}-minute session:
 - Average Attention/Engagement Proxy Score: ${average_attention_score}/100
 - Face Presence Ratio: ${(face_presence * 100).toFixed(1)}%
@@ -710,34 +719,39 @@ Provide your response in JSON format with these exact keys:
   "recommendations": ["Actionable pedagogical suggestion 1", "Actionable pedagogical suggestion 2", "Actionable pedagogical suggestion 3"]
 }`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-        },
-      });
+    for (const modelName of geminiCandidateModels) {
+      if (insightResult.summary) break;
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
 
-      const text = response.text?.trim();
-      if (text) {
-        const parsed = JSON.parse(text);
-        insightResult = {
-          id: 'ins_' + Date.now(),
-          session_id: session_id || 'unassigned',
-          summary: parsed.summary || insightResult.summary,
-          overall_pattern: parsed.overall_pattern || insightResult.overall_pattern,
-          notable_periods: parsed.notable_periods || insightResult.notable_periods,
-          distraction_analysis: parsed.distraction_analysis || insightResult.distraction_analysis,
-          recommendations: parsed.recommendations || [
-            'Incorporate interactive polling at midpoint.',
-            'Break lectures longer than 25 minutes into micro-segments.',
-          ],
-          created_at: new Date().toISOString(),
-          provider: 'gemini',
-        };
+        const text = response.text?.trim();
+        if (text) {
+          const parsed = JSON.parse(text);
+          insightResult = {
+            id: 'ins_' + Date.now(),
+            session_id: session_id || 'unassigned',
+            summary: parsed.summary || insightResult.summary,
+            overall_pattern: parsed.overall_pattern || insightResult.overall_pattern,
+            notable_periods: parsed.notable_periods || insightResult.notable_periods,
+            distraction_analysis: parsed.distraction_analysis || insightResult.distraction_analysis,
+            recommendations: parsed.recommendations || [
+              'Incorporate interactive polling at midpoint.',
+              'Break lectures longer than 25 minutes into micro-segments.',
+            ],
+            created_at: new Date().toISOString(),
+            provider: `gemini (${modelName})`,
+          };
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`Gemini (${modelName}) fell back:`, err?.message);
       }
-    } catch (err: any) {
-      console.warn('Gemini API call fell back to deterministic statistical engine:', err?.message);
     }
   }
 

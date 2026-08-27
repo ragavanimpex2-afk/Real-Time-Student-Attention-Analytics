@@ -51,6 +51,22 @@ export class AttentionCVEngine {
   private recentEyeOpennessValues: { val: number; time: number }[] = [];
   private recentPitchAngles: { pitch: number; time: number }[] = [];
 
+  // Kinematic pose history for variance & oscillation / head dancing detection
+  private recentHeadPoses: {
+    yaw: number;
+    pitch: number;
+    roll: number;
+    centerX: number;
+    centerY: number;
+    time: number;
+  }[] = [];
+
+  // Adaptive baseline EAR & ocular occlusion discrimination to prevent false positives
+  private runningBaselineEAR: number = 0.28;
+  private isEyeOccluded: boolean = false;
+  private eyeOcclusionStartMs: number = 0;
+  private lastBlinkEndedMs: number = 0;
+
   // Distraction accumulation state
   private currentDistractionType: DistractionState | null = null;
   private distractionStartMs: number = 0;
@@ -270,9 +286,35 @@ export class AttentionCVEngine {
         // Right eye indices: 362, 385, 387, 263, 373, 380
         const earLeft = this.calculateEAR(landmarks, [33, 160, 158, 133, 153, 144]);
         const earRight = this.calculateEAR(landmarks, [362, 385, 387, 263, 373, 380]);
-        eyeOpennessLeft = Math.min(1.0, earLeft / 0.32);
-        eyeOpennessRight = Math.min(1.0, earRight / 0.32);
-        eyeOpenness = (eyeOpennessLeft + eyeOpennessRight) / 2;
+
+        // Adaptive baseline calibration (smoothly learns the individual's open eye geometry when stable)
+        if (earLeft > 0.18 && earRight > 0.18 && Math.abs(earLeft - earRight) < 0.10) {
+          const currentAvgEar = (earLeft + earRight) / 2;
+          this.runningBaselineEAR = this.runningBaselineEAR * 0.97 + currentAvgEar * 0.03;
+          this.runningBaselineEAR = Math.max(0.22, Math.min(0.38, this.runningBaselineEAR));
+        }
+
+        // Tighter Occlusion vs Blink Discrimination
+        // Asymmetry indicates hand touching face, side hair, extreme single-eye occlusion, or reflection
+        const earAsymmetry = Math.abs(earLeft - earRight);
+        const dynamicBlinkEarThreshold = Math.max(0.13, this.runningBaselineEAR * 0.55);
+        const isAsymmetricOcclusion = earAsymmetry > 0.14 && Math.max(earLeft, earRight) > dynamicBlinkEarThreshold + 0.04;
+
+        if (isAsymmetricOcclusion) {
+          this.isEyeOccluded = true;
+          // Use the unobstructed eye's aperture for attention proxy to prevent false closure/blink flags
+          const maxEyeEar = Math.max(earLeft, earRight);
+          eyeOpennessLeft = Math.min(1.0, maxEyeEar / this.runningBaselineEAR);
+          eyeOpennessRight = Math.min(1.0, maxEyeEar / this.runningBaselineEAR);
+          eyeOpenness = Math.min(1.0, maxEyeEar / this.runningBaselineEAR);
+          // Cancel closed eye timer so occlusion does not trigger false positive microsleep or blink
+          this.isEyeClosed = false;
+        } else {
+          this.isEyeOccluded = false;
+          eyeOpennessLeft = Math.min(1.0, earLeft / this.runningBaselineEAR);
+          eyeOpennessRight = Math.min(1.0, earRight / this.runningBaselineEAR);
+          eyeOpenness = (eyeOpennessLeft + eyeOpennessRight) / 2;
+        }
 
         // Head pose from key anchor points (Nose tip 1, Chin 152, Forehead 10, Left temple 33, Right temple 263)
         const nose = landmarks[1];
@@ -316,8 +358,9 @@ export class AttentionCVEngine {
           gazeForwardScore = 0.96;
         }
 
-        // Blink Detection
-        if (eyeOpenness < this.weights.blinkEarThreshold) {
+        // Robust Blink Detection with tight physiological temporal & refractory gating
+        const isBilateralClosed = earLeft < dynamicBlinkEarThreshold && earRight < dynamicBlinkEarThreshold;
+        if (!this.isEyeOccluded && isBilateralClosed) {
           if (!this.isEyeClosed) {
             this.isEyeClosed = true;
             this.eyeClosedStartMs = now;
@@ -325,16 +368,18 @@ export class AttentionCVEngine {
         } else {
           if (this.isEyeClosed) {
             const closureDuration = now - this.eyeClosedStartMs;
-            if (closureDuration >= 70 && closureDuration <= 600) {
+            // Human physiological blink duration is strictly 80ms - 460ms with a minimum 140ms refractory recovery
+            if (closureDuration >= 80 && closureDuration <= 460 && now - this.lastBlinkEndedMs >= 140) {
               blinkDetected = true;
               this.blinkCount++;
               this.blinkTimestamps.push(now);
+              this.lastBlinkEndedMs = now;
             }
             this.isEyeClosed = false;
           }
         }
 
-        // Track temporal movement windows (for head dancing, rapid movements, phone checking)
+        // Track temporal movement windows (for head dancing, rapid saccades, phone checking)
         this.recentGazeDirections.push({ dir: gazeDirection, time: now });
         this.recentGazeDirections = this.recentGazeDirections.filter((g) => now - g.time <= 3500);
 
@@ -344,7 +389,56 @@ export class AttentionCVEngine {
         this.recentPitchAngles.push({ pitch: pitchDeg, time: now });
         this.recentPitchAngles = this.recentPitchAngles.filter((p) => now - p.time <= 3000);
 
-        // Check for Head Dancing / Saccadic restlessness / Rapid Gaze Darting (>= 3 direction or angle shifts in 3s)
+        // 3D Head Kinematic History Buffer (Yaw, Pitch, Roll, Centroid X/Y) for Variance & Oscillation Detection
+        this.recentHeadPoses.push({
+          yaw: yawDeg,
+          pitch: pitchDeg,
+          roll: rollDeg,
+          centerX: (boxX + boxW / 2) / width,
+          centerY: (boxY + boxH / 2) / height,
+          time: now,
+        });
+        this.recentHeadPoses = this.recentHeadPoses.filter((p) => now - p.time <= 3000);
+
+        // Calculate Multi-Axis Head Movement Variance & Directional Zero-Crossing Oscillations (Head Dancing)
+        let isHeadDancing = false;
+        let compositeKinematicVariance = 0;
+
+        if (this.recentHeadPoses.length >= 8) {
+          const N = this.recentHeadPoses.length;
+          const meanYaw = this.recentHeadPoses.reduce((acc, p) => acc + p.yaw, 0) / N;
+          const meanPitch = this.recentHeadPoses.reduce((acc, p) => acc + p.pitch, 0) / N;
+          const meanRoll = this.recentHeadPoses.reduce((acc, p) => acc + p.roll, 0) / N;
+          const meanX = this.recentHeadPoses.reduce((acc, p) => acc + p.centerX, 0) / N;
+          const meanY = this.recentHeadPoses.reduce((acc, p) => acc + p.centerY, 0) / N;
+
+          const varYaw = this.recentHeadPoses.reduce((acc, p) => acc + (p.yaw - meanYaw) ** 2, 0) / N;
+          const varPitch = this.recentHeadPoses.reduce((acc, p) => acc + (p.pitch - meanPitch) ** 2, 0) / N;
+          const varRoll = this.recentHeadPoses.reduce((acc, p) => acc + (p.roll - meanRoll) ** 2, 0) / N;
+          const varPos = this.recentHeadPoses.reduce((acc, p) => acc + (p.centerX - meanX) ** 2 + (p.centerY - meanY) ** 2, 0) / N * 10000;
+
+          // Count directional reversals across consecutive frames (identifies rhythmic head bobbing, shaking, dancing)
+          let directionalReversals = 0;
+          for (let i = 2; i < N; i++) {
+            const dYawPrev = this.recentHeadPoses[i - 1].yaw - this.recentHeadPoses[i - 2].yaw;
+            const dYawCurr = this.recentHeadPoses[i].yaw - this.recentHeadPoses[i - 1].yaw;
+            if (dYawPrev * dYawCurr < -1.8) directionalReversals++;
+
+            const dPitchPrev = this.recentHeadPoses[i - 1].pitch - this.recentHeadPoses[i - 2].pitch;
+            const dPitchCurr = this.recentHeadPoses[i].pitch - this.recentHeadPoses[i - 1].pitch;
+            if (dPitchPrev * dPitchCurr < -1.8) directionalReversals++;
+          }
+
+          // Composite Kinematic Energy Formula
+          compositeKinematicVariance = varYaw * 0.85 + varPitch * 1.1 + varRoll * 0.95 + varPos * 0.7;
+
+          // Detect active head dancing / rhythmic motion distraction
+          if (compositeKinematicVariance > 30 || (directionalReversals >= 3 && compositeKinematicVariance > 14)) {
+            isHeadDancing = true;
+          }
+        }
+
+        // Check for Rapid Gaze Darting / Saccadic restlessness (>= 3 direction shifts in 3.5s)
         let directionChanges = 0;
         for (let i = 1; i < this.recentGazeDirections.length; i++) {
           if (this.recentGazeDirections[i].dir !== this.recentGazeDirections[i - 1].dir) {
@@ -352,30 +446,29 @@ export class AttentionCVEngine {
           }
         }
 
-        // Detect excessive head bobbing / dancing from pitch variance
-        let pitchVariance = 0;
-        if (this.recentPitchAngles.length > 8) {
-          const avgPitch = this.recentPitchAngles.reduce((a, b) => a + b.pitch, 0) / this.recentPitchAngles.length;
-          pitchVariance = this.recentPitchAngles.reduce((a, b) => a + (b.pitch - avgPitch) ** 2, 0) / this.recentPitchAngles.length;
-        }
-
         // Check for Drowsy Microsleeps (Average eye openness < 0.35 over rolling window)
         const avgRecentOpenness =
           this.recentEyeOpennessValues.reduce((acc, v) => acc + v.val, 0) /
           (this.recentEyeOpennessValues.length || 1);
 
-        // Advanced Multi-Dimensional Distraction Classification
+        // Advanced Multi-Dimensional Distraction Classification Hierarchy
         let distractionSubreason: string | undefined = undefined;
 
         if (faceCount > 1) {
           distractionState = 'multi_face_warning';
           distractionSubreason = 'Multiple subjects detected in view';
-        } else if (this.isEyeClosed && now - this.eyeClosedStartMs > 1500) {
+        } else if (!this.isEyeOccluded && this.isEyeClosed && now - this.eyeClosedStartMs > 1400) {
           distractionState = 'eyes_closed';
-          distractionSubreason = 'Continuous eye closure detected (>1.5s)';
-        } else if (avgRecentOpenness < 0.35 && this.recentEyeOpennessValues.length > 15) {
+          distractionSubreason = 'Continuous bilateral eye closure detected (>1.4s)';
+        } else if (!this.isEyeOccluded && avgRecentOpenness < 0.34 && this.recentEyeOpennessValues.length > 15) {
           distractionState = 'drowsy_microsleep';
           distractionSubreason = 'Drowsy pattern / low eyelid aperture';
+        } else if (isHeadDancing) {
+          distractionState = 'rapid_gaze_darting';
+          distractionSubreason = `Active distraction: head dancing / motion variance (var=${Math.round(compositeKinematicVariance)})`;
+        } else if (directionChanges >= 3) {
+          distractionState = 'rapid_gaze_darting';
+          distractionSubreason = 'Rapid saccadic gaze darting / visual restlessness';
         } else if (pitchDeg > 12 || gazeDirection === 'away_down') {
           // Responsive phone / desk downward gaze detection
           distractionState = 'head_down_phone';
@@ -386,9 +479,6 @@ export class AttentionCVEngine {
         } else if (Math.abs(yawDeg) > this.weights.headYawThresholdDeg) {
           distractionState = 'head_turned';
           distractionSubreason = yawDeg > 0 ? 'Head turned right' : 'Head turned left';
-        } else if (directionChanges >= 3 || pitchVariance > 45) {
-          distractionState = 'rapid_gaze_darting';
-          distractionSubreason = 'Head dancing / rapid saccadic gaze darting';
         } else if (gazeDirection !== 'forward') {
           distractionState = 'gaze_away';
           distractionSubreason = `Gaze directed ${gazeDirection.replace('away_', '')}`;
@@ -972,7 +1062,7 @@ export class AttentionCVEngine {
     } else if (distractionState === 'drowsy_microsleep') {
       tagText = 'WARNING | DROWSY MICROSLEEP';
     } else if (distractionState === 'rapid_gaze_darting') {
-      tagText = 'DISTRACTED | RAPID GAZE DARTING';
+      tagText = 'DISTRACTED | HEAD DANCING / GAZE DARTING';
     }
 
     // 1. Draw Corner HUD Box
