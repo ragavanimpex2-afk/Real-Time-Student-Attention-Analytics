@@ -200,6 +200,7 @@ export const TimelineChart: React.FC<TimelineChartProps> = ({
     time: d.timeLabel || `${Math.round(d.timeOffsetSec / 60)}m`,
     score: d.attention_score,
     isDistracted: d.is_distracted,
+    isBreak: d.is_break_interval,
     eventLabel: d.event_label,
   }));
 
@@ -207,9 +208,15 @@ export const TimelineChart: React.FC<TimelineChartProps> = ({
     <div className="w-full h-full">
       <div className="flex items-center justify-between mb-4">
         <div className="text-sm font-semibold text-[#0F172A]">Attention Proxy Over Time</div>
-        <div className="flex items-center gap-2 text-xs font-medium text-[#64748B]">
-          <span className="w-2.5 h-2.5 rounded-sm bg-[#2563EB]"></span>
-          <span>ATTENTION SCORE</span>
+        <div className="flex items-center gap-3 text-xs font-medium text-[#64748B]">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm bg-[#2563EB]"></span>
+            <span>ATTENTION SCORE</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span>
+            <span>REST BREAK</span>
+          </div>
         </div>
       </div>
       <div style={{ height }}>
@@ -248,9 +255,17 @@ export const TimelineChart: React.FC<TimelineChartProps> = ({
                       <div className="font-bold text-sm mt-0.5 text-blue-300">
                         Proxy Score: {val}/100
                       </div>
-                      {item.isDistracted && (
+                      {item.isBreak ? (
+                        <div className="text-emerald-400 font-medium text-[11px] mt-1">
+                          ☕ Scheduled Rest Interval
+                        </div>
+                      ) : item.isDistracted ? (
                         <div className="text-amber-400 font-medium text-[11px] mt-1">
                           ⚠️ Off-Screen Deviation
+                        </div>
+                      ) : (
+                        <div className="text-emerald-400 font-medium text-[11px] mt-1">
+                          ✓ Focused Engagement
                         </div>
                       )}
                     </div>

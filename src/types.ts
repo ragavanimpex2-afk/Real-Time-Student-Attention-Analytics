@@ -24,7 +24,18 @@ export type DistractionState =
   | 'drowsy_microsleep'
   | 'rapid_gaze_darting'
   | 'face_absent'
-  | 'multi_face_warning';
+  | 'multi_face_warning'
+  | 'break_rest';
+
+export type SessionMode = 'exam' | 'pomodoro_rest';
+
+export interface PomodoroConfig {
+  workMinutes: number; // e.g. 20
+  breakMinutes: number; // e.g. 15
+  currentPhase: 'work' | 'break';
+  isBreakActive: boolean;
+  phaseRemainingSec: number;
+}
 
 export interface CVTelemetryFrame {
   timestamp: string;
@@ -111,6 +122,9 @@ export interface AIInsight {
     gaze_away_events: number;
     long_distraction_events: number;
     blink_rate: number;
+    session_mode?: SessionMode;
+    resting_baseline_pitch?: number;
+    resting_baseline_yaw?: number;
   };
 }
 
@@ -123,6 +137,7 @@ export interface TimelineDataPoint {
   gaze_direction: GazeDirection;
   is_distracted: boolean;
   event_label?: string;
+  is_break_interval?: boolean;
 }
 
 export interface SessionData {
@@ -135,6 +150,9 @@ export interface SessionData {
   duration_sec: number;
   status: 'active' | 'completed' | 'archived';
   privacy_mode: 'Local Edge' | 'Anonymized';
+  session_mode?: SessionMode;
+  pomodoro_config?: PomodoroConfig;
+  calibration_baseline?: CalibrationBaseline;
   average_attention_score: number;
   peak_attention_score: number;
   lowest_attention_score: number;

@@ -10,6 +10,9 @@ import {
   ArrowLeft,
   RefreshCw,
   FileSpreadsheet,
+  Coffee,
+  Lock,
+  Target,
 } from 'lucide-react';
 import { SessionData, AIInsight } from '../types';
 import { ScoreRing, TimelineChart, InsightCard } from '../components/UIComponents';
@@ -121,6 +124,37 @@ export const SessionResultsPage: React.FC<SessionResultsPageProps> = ({
             </span>
             <span>•</span>
             <span>{durationMin > 0 ? `${durationMin} minutes` : `${session.duration_sec}s`}</span>
+            <span>•</span>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase flex items-center gap-1 ${
+                session.session_mode === 'pomodoro_rest'
+                  ? 'bg-amber-100 text-amber-800'
+                  : 'bg-blue-100 text-blue-800'
+              }`}
+            >
+              {session.session_mode === 'pomodoro_rest' ? (
+                <>
+                  <Coffee className="w-3 h-3 text-amber-600" />
+                  <span>Rest / Pomodoro Mode (20m/15m)</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3 h-3 text-blue-600" />
+                  <span>Exam Mode (Strict)</span>
+                </>
+              )}
+            </span>
+            {session.calibration_baseline && (
+              <>
+                <span>•</span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 flex items-center gap-1 border border-slate-200">
+                  <Target className="w-3 h-3 text-blue-600" />
+                  <span>
+                    Zero Baseline (Pitch: {session.calibration_baseline.baselinePitch > 0 ? '+' : ''}{session.calibration_baseline.baselinePitch}°, Yaw: {session.calibration_baseline.baselineYaw > 0 ? '+' : ''}{session.calibration_baseline.baselineYaw}°)
+                  </span>
+                </span>
+              </>
+            )}
             <span>•</span>
             <span className="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase bg-[#F1F5F9] text-[#475569]">
               COMPLETED

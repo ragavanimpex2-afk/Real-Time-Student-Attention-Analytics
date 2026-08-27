@@ -16,6 +16,13 @@ import {
   RefreshCw,
   Sparkles,
   Target,
+  Coffee,
+  Lock,
+  Clock,
+  Play,
+  Pause,
+  RotateCcw,
+  Volume2,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -33,6 +40,8 @@ import {
   SessionData,
   TimelineDataPoint,
   DistractionState,
+  SessionMode,
+  PomodoroConfig,
 } from '../types';
 import { AttentionCVEngine, DEFAULT_WEIGHTS } from '../lib/cvEngine';
 import { MotionSparkline } from '../components/MotionSparkline';
@@ -57,6 +66,17 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isInitializingModel, setIsInitializingModel] = useState(false);
   const [activeManualTrigger, setActiveManualTrigger] = useState<DistractionState | null>(null);
+
+  // Session Mode & Pomodoro Config
+  const [sessionMode, setSessionMode] = useState<SessionMode>('exam');
+  const [pomodoroConfig, setPomodoroConfig] = useState<PomodoroConfig>({
+    workDurationMin: 20,
+    breakDurationMin: 15,
+    autoStartBreaks: true,
+  });
+  const [pomodoroPhase, setPomodoroPhase] = useState<'work' | 'break'>('work');
+  const [pomodoroPhaseRemainingSec, setPomodoroPhaseRemainingSec] = useState<number>(20 * 60);
+  const [showPomodoroConfigModal, setShowPomodoroConfigModal] = useState<boolean>(false);
 
   // Live Telemetry state
   const [latestFrame, setLatestFrame] = useState<CVTelemetryFrame>({
@@ -91,7 +111,7 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
   isCalibratingRef.current = isCalibrating;
 
   const [timelineHistory, setTimelineHistory] = useState<
-    Array<{ time: string; score: number; offsetSec: number }>
+    Array<{ time: string; score: number; offsetSec: number; isBreak?: boolean }>
   >([]);
   const [motionHistory, setMotionHistory] = useState<
     Array<{ intensity: number; variance: number }>
@@ -152,10 +172,46 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
 
     setupCamera();
 
-    // Session Timer (Ticks every second only after calibration step)
+    // Session Timer & Pomodoro Cycle Ticker
     const timerInterval = setInterval(() => {
       if (!isCalibratingRef.current) {
         setElapsedSec((prev) => prev + 1);
+
+        // Update Pomodoro interval countdown if in rest mode
+        setPomodoroPhaseRemainingSec((prevSec) => {
+          if (prevSec <= 1) {
+            // Switch phase automatically
+            setPomodoroPhase((currentPhase) => {
+              const nextPhase = currentPhase === 'work' ? 'break' : 'work';
+              const nextDurationSec =
+                nextPhase === 'work'
+                  ? pomodoroConfig.workDurationMin * 60
+                  : pomodoroConfig.breakDurationMin * 60;
+
+              if (engineRef.current) {
+                engineRef.current.setBreakActive(nextPhase === 'break');
+              }
+
+              if (nextPhase === 'break') {
+                setCalibrationNotification(
+                  `☕ Rest Break Started (${pomodoroConfig.breakDurationMin} mins): Feel free to rest, stretch, or use your phone without distraction warnings!`
+                );
+              } else {
+                setCalibrationNotification(
+                  `💼 Focus Block Resumed (${pomodoroConfig.workDurationMin} mins): Distraction monitoring active.`
+                );
+              }
+
+              setTimeout(() => setCalibrationNotification(null), 6000);
+              return nextPhase;
+            });
+
+            return pomodoroPhase === 'work'
+              ? pomodoroConfig.breakDurationMin * 60
+              : pomodoroConfig.workDurationMin * 60;
+          }
+          return prevSec - 1;
+        });
       }
     }, 1000);
 
@@ -168,7 +224,49 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
         stream.getTracks().forEach((track) => track.stop());
       }
     };
-  }, []);
+  }, [pomodoroConfig.workDurationMin, pomodoroConfig.breakDurationMin, pomodoroPhase]);
+
+  // Sync mode changes to engine
+  const handleModeChange = (mode: SessionMode) => {
+    setSessionMode(mode);
+    if (engineRef.current) {
+      engineRef.current.setSessionMode(mode);
+      if (mode === 'exam') {
+        engineRef.current.setBreakActive(false);
+        setPomodoroPhase('work');
+      } else {
+        setPomodoroPhase('work');
+        setPomodoroPhaseRemainingSec(pomodoroConfig.workDurationMin * 60);
+        engineRef.current.setBreakActive(false);
+      }
+    }
+  };
+
+  // Toggle break phase manually in Pomodoro mode
+  const handleToggleBreakPhase = () => {
+    const nextPhase = pomodoroPhase === 'work' ? 'break' : 'work';
+    setPomodoroPhase(nextPhase);
+    const nextSec =
+      nextPhase === 'break'
+        ? pomodoroConfig.breakDurationMin * 60
+        : pomodoroConfig.workDurationMin * 60;
+    setPomodoroPhaseRemainingSec(nextSec);
+
+    if (engineRef.current) {
+      engineRef.current.setBreakActive(nextPhase === 'break');
+    }
+
+    if (nextPhase === 'break') {
+      setCalibrationNotification(
+        `☕ Rest Break Active (${pomodoroConfig.breakDurationMin} mins): Phone and desk movement are allowed without penalty.`
+      );
+    } else {
+      setCalibrationNotification(
+        `💼 Focus Work Block Resumed (${pomodoroConfig.workDurationMin} mins): Focus monitoring active.`
+      );
+    }
+    setTimeout(() => setCalibrationNotification(null), 5000);
+  };
 
   // Initialize CV Engine
   const startCVEngine = async () => {
@@ -189,67 +287,76 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
             return updated.slice(-28);
           });
 
-          // Update frame accumulation stats
-          const stats = statsRef.current;
-          stats.totalFrames++;
-          if (frame.face_present) stats.facePresentFrames++;
-          if (frame.gaze_direction === 'forward') stats.forwardGazeFrames++;
-          stats.scoreHistory.push(frame.attention_score);
+          // Update frame accumulation stats only after calibration
+          if (!isCalibratingRef.current) {
+            const stats = statsRef.current;
+            stats.totalFrames++;
+            if (frame.face_present) stats.facePresentFrames++;
+            if (frame.gaze_direction === 'forward') stats.forwardGazeFrames++;
+            stats.scoreHistory.push(frame.attention_score);
 
-          // Sample timeline point every second
-          const currentSec = Math.floor((Date.now() - sessionStartTime) / 1000);
-          if (currentSec !== stats.lastSecondRecorded) {
-            stats.lastSecondRecorded = currentSec;
-            const timeLabel = `${Math.floor(currentSec / 60)}m ${currentSec % 60}s`;
-            const point: TimelineDataPoint = {
-              timestamp: new Date().toISOString(),
-              timeLabel,
-              timeOffsetSec: currentSec,
-              attention_score: frame.attention_score,
-              face_present: frame.face_present,
-              gaze_direction: frame.gaze_direction,
-              is_distracted: frame.distraction_state !== 'focused',
-            };
-            stats.timelinePoints.push(point);
+            // Sample timeline point every second
+            const currentSec = Math.floor((Date.now() - sessionActualStartTime) / 1000);
+            if (currentSec !== stats.lastSecondRecorded) {
+              stats.lastSecondRecorded = currentSec;
+              const timeLabel = `${Math.floor(currentSec / 60)}m ${currentSec % 60}s`;
+              const isBreakInterval = frame.distraction_state === 'break_rest';
+              const point: TimelineDataPoint = {
+                timestamp: new Date().toISOString(),
+                timeLabel,
+                timeOffsetSec: currentSec,
+                attention_score: isBreakInterval ? 100 : frame.attention_score,
+                face_present: frame.face_present,
+                gaze_direction: frame.gaze_direction,
+                is_distracted: isBreakInterval ? false : frame.distraction_state !== 'focused',
+                is_break_interval: isBreakInterval,
+              };
+              stats.timelinePoints.push(point);
 
-            setTimelineHistory((prev) => {
-              const next = [
-                ...prev,
-                {
-                  time: `${Math.floor(currentSec / 60)}m`,
-                  score: frame.attention_score,
-                  offsetSec: currentSec,
-                },
-              ];
-              return next.slice(-30);
-            });
+              setTimelineHistory((prev) => {
+                const next = [
+                  ...prev,
+                  {
+                    time: `${Math.floor(currentSec / 60)}m`,
+                    score: isBreakInterval ? 100 : frame.attention_score,
+                    offsetSec: currentSec,
+                    isBreak: isBreakInterval,
+                  },
+                ];
+                return next.slice(-30);
+              });
+            }
           }
         },
         onEventDetected: (event) => {
           // Ongoing distraction duration update
-          statsRef.current.activeEvent = event;
-          setActiveDistraction(event);
+          if (!isCalibratingRef.current) {
+            statsRef.current.activeEvent = event;
+            setActiveDistraction(event);
 
-          setLiveEvents((prev) => {
-            const index = prev.findIndex((e) => e.id === event.id);
-            if (index >= 0) {
-              const updated = [...prev];
-              updated[index] = event;
-              return updated;
-            }
-            return [event, ...prev.slice(0, 15)];
-          });
+            setLiveEvents((prev) => {
+              const index = prev.findIndex((e) => e.id === event.id);
+              if (index >= 0) {
+                const updated = [...prev];
+                updated[index] = event;
+                return updated;
+              }
+              return [event, ...prev.slice(0, 15)];
+            });
+          }
         },
         onEventFinalized: (event) => {
           // Completed distraction event with full duration
-          statsRef.current.completedEvents.push(event);
-          statsRef.current.activeEvent = null;
-          setActiveDistraction(null);
+          if (!isCalibratingRef.current) {
+            statsRef.current.completedEvents.push(event);
+            statsRef.current.activeEvent = null;
+            setActiveDistraction(null);
 
-          setLiveEvents((prev) => {
-            const filtered = prev.filter((e) => e.id !== event.id);
-            return [event, ...filtered.slice(0, 15)];
-          });
+            setLiveEvents((prev) => {
+              const filtered = prev.filter((e) => e.id !== event.id);
+              return [event, ...filtered.slice(0, 15)];
+            });
+          }
         },
         onError: (err) => {
           console.error('CV Engine Error:', err);
@@ -258,6 +365,7 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
       weights
     );
 
+    engine.setSessionMode(sessionMode);
     await engine.initializeMediaPipe();
     setIsInitializingModel(false);
     engineRef.current = engine;
@@ -333,6 +441,13 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
     return `${hrs.toString().padStart(2, '0')}:${mins
       .toString()
       .padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Format Pomodoro Phase Time (MM:SS)
+  const formatPhaseTime = (totalSec: number) => {
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   // End Session & Generate 100% REAL Processed Session Results
@@ -412,11 +527,14 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
     const completedSession: SessionData = {
       id: 'sess_' + Date.now(),
       userId: 'usr_researcher_01',
-      sessionName: `Engagement Session ${new Date().toLocaleTimeString([], {
+      sessionName: `${sessionMode === 'exam' ? 'Exam' : 'Pomodoro Study'} Session ${new Date().toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
       })}`,
       cohortClass: 'CS-101 / Intro to CS',
+      session_mode: sessionMode,
+      pomodoro_config: pomodoroConfig,
+      calibration_baseline: calibrationBaseline ?? undefined,
       started_at: new Date(sessionStartTime).toISOString(),
       ended_at: new Date().toISOString(),
       duration_sec: durationSec,
@@ -438,22 +556,23 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
     onFinishSession(completedSession);
   };
 
-  const isDistracted = latestFrame.distraction_state !== 'focused';
+  const isDistracted = latestFrame.distraction_state !== 'focused' && latestFrame.distraction_state !== 'break_rest';
+  const isBreakActive = latestFrame.distraction_state === 'break_rest' || pomodoroPhase === 'break';
 
   return (
     <div id="live-session-container" className="space-y-6 animate-in fade-in duration-200">
-      {/* Privacy Enforcement Banner */}
+      {/* Top Banner: Mode Selection & Privacy Enforcement */}
       <div
         id="privacy-banner"
-        className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs"
+        className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-2xs"
       >
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
-            <Shield className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 shrink-0">
+            {sessionMode === 'exam' ? <Lock className="w-5 h-5" /> : <Coffee className="w-5 h-5 text-amber-600" />}
           </div>
           <div>
-            <div className="text-xs font-bold text-[#0F172A] tracking-wider uppercase flex items-center gap-2">
-              <span>PRIVACY ENFORCEMENT ACTIVE</span>
+            <div className="text-xs font-bold text-[#0F172A] tracking-wider uppercase flex flex-wrap items-center gap-2">
+              <span>{sessionMode === 'exam' ? 'EXAM MODE (STRICT PROCTORING)' : 'REST / POMODORO MODE (20M WORK / 15M BREAK)'}</span>
               {calibrationBaseline?.isCalibrated && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-bold border border-blue-200">
                   <Target className="w-3 h-3" />
@@ -461,33 +580,214 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                 </span>
               )}
             </div>
-            <div className="text-xs text-[#64748B]">Local Edge Processing • Zero Video Stored</div>
+            <div className="text-xs text-[#64748B]">
+              {sessionMode === 'exam'
+                ? 'Continuous focus enforcement • Zero breaks • Local Edge AI'
+                : 'Relaxed typing/desk thresholds • 15m breaks allow phone & resting'}
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Mode Selector & Action Controls */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Mode Switcher Pills */}
+          <div className="flex items-center bg-[#F1F5F9] p-1 rounded-xl border border-[#E2E8F0]">
+            <button
+              id="mode-btn-exam"
+              onClick={() => handleModeChange('exam')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                sessionMode === 'exam'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-[#64748B] hover:text-[#0F172A]'
+              }`}
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Exam Mode</span>
+            </button>
+            <button
+              id="mode-btn-pomodoro"
+              onClick={() => handleModeChange('pomodoro_rest')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                sessionMode === 'pomodoro_rest'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-[#64748B] hover:text-[#0F172A]'
+              }`}
+            >
+              <Coffee className="w-3.5 h-3.5" />
+              <span>Rest Mode (20m/15m)</span>
+            </button>
+          </div>
+
           <button
             onClick={handleStartRecalibration}
             className="text-xs font-semibold text-[#0F172A] hover:text-blue-600 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
           >
             <Target className="w-3.5 h-3.5 text-blue-600" />
-            <span>Recalibrate Baseline</span>
+            <span>5s Calibration</span>
           </button>
 
           <button
             onClick={onOpenSettings}
-            className="text-xs font-semibold text-[#64748B] hover:text-[#0F172A] flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC]"
+            className="text-xs font-semibold text-[#64748B] hover:text-[#0F172A] flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer"
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>Formula Settings</span>
+            <span>Thresholds</span>
           </button>
 
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs font-semibold">
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs font-semibold">
             <EyeOff className="w-3.5 h-3.5" />
-            <span>Video Not Stored</span>
+            <span className="hidden sm:inline">No Video Stored</span>
           </div>
         </div>
       </div>
+
+      {/* Pomodoro Live Control Strip (when in Rest / Pomodoro Mode) */}
+      {sessionMode === 'pomodoro_rest' && (
+        <div
+          id="pomodoro-control-strip"
+          className={`rounded-xl p-4 border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs transition-all ${
+            pomodoroPhase === 'break'
+              ? 'bg-emerald-50/90 border-emerald-300 text-emerald-900'
+              : 'bg-amber-50/80 border-amber-300 text-amber-900'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-white shadow-xs ${
+                pomodoroPhase === 'break' ? 'bg-emerald-600' : 'bg-amber-600'
+              }`}
+            >
+              {pomodoroPhase === 'break' ? <Coffee className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider">
+                  {pomodoroPhase === 'break' ? '☕ Rest Break Interval Active' : '💼 Focus Study Block Active'}
+                </span>
+                <span
+                  className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded ${
+                    pomodoroPhase === 'break'
+                      ? 'bg-emerald-200 text-emerald-900'
+                      : 'bg-amber-200 text-amber-900'
+                  }`}
+                >
+                  {formatPhaseTime(pomodoroPhaseRemainingSec)} REMAINING
+                </span>
+              </div>
+              <p className="text-xs mt-0.5 opacity-90">
+                {pomodoroPhase === 'break'
+                  ? 'Distraction warnings are paused. You can use your mobile phone, look at your notes/desk, or take a break freely.'
+                  : 'Distraction monitoring active with generous deadbands for natural typing and screen reading.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleToggleBreakPhase}
+              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer ${
+                pomodoroPhase === 'break'
+                  ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              }`}
+            >
+              {pomodoroPhase === 'break' ? (
+                <>
+                  <Activity className="w-4 h-4" />
+                  <span>Resume Focus Block</span>
+                </>
+              ) : (
+                <>
+                  <Coffee className="w-4 h-4" />
+                  <span>Take 15m Break Now</span>
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={() => setShowPomodoroConfigModal(true)}
+              className="px-3 py-2 bg-white/80 hover:bg-white text-[#334155] rounded-xl text-xs font-semibold border border-black/10 transition-colors cursor-pointer"
+            >
+              Interval Settings
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Pomodoro Duration Settings Modal */}
+      {showPomodoroConfigModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-[#E2E8F0] max-w-sm w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-[#0F172A] font-bold text-sm">
+                <Coffee className="w-4 h-4 text-amber-600" />
+                <span>Pomodoro Rest Durations</span>
+              </div>
+              <button
+                onClick={() => setShowPomodoroConfigModal(false)}
+                className="text-xs text-[#64748B] hover:text-[#0F172A]"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-[#64748B]">
+              Configure your focus work duration and rest intervals. Phone usage and desk glances are permitted during breaks.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-[#334155] block mb-1">
+                  Work Duration: {pomodoroConfig.workDurationMin} mins
+                </label>
+                <input
+                  type="range"
+                  min="5"
+                  max="60"
+                  step="5"
+                  value={pomodoroConfig.workDurationMin}
+                  onChange={(e) =>
+                    setPomodoroConfig((prev) => ({
+                      ...prev,
+                      workDurationMin: parseInt(e.target.value, 10),
+                    }))
+                  }
+                  className="w-full accent-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#334155] block mb-1">
+                  Break Duration: {pomodoroConfig.breakDurationMin} mins
+                </label>
+                <input
+                  type="range"
+                  min="5"
+                  max="30"
+                  step="5"
+                  value={pomodoroConfig.breakDurationMin}
+                  onChange={(e) =>
+                    setPomodoroConfig((prev) => ({
+                      ...prev,
+                      breakDurationMin: parseInt(e.target.value, 10),
+                    }))
+                  }
+                  className="w-full accent-amber-600"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowPomodoroConfigModal(false)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Apply & Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Baseline Calibration Success Notification Banner */}
       {calibrationNotification && (

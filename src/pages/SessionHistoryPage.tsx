@@ -11,6 +11,8 @@ import {
   TrendingUp,
   Activity,
   ArrowUpRight,
+  Coffee,
+  Target,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -289,6 +291,32 @@ export const SessionHistoryPage: React.FC<SessionHistoryPageProps> = ({
                   {Math.floor(selectedSession.duration_sec / 60)}m {selectedSession.duration_sec % 60}s
                 </span>
               </div>
+
+              <div className="flex justify-between text-[#334155]">
+                <span className="text-[#64748B]">Mode:</span>
+                <span className="font-semibold flex items-center gap-1">
+                  {selectedSession.session_mode === 'pomodoro_rest' ? (
+                    <>
+                      <Coffee className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Rest (20m/15m)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Exam (Strict)</span>
+                    </>
+                  )}
+                </span>
+              </div>
+
+              {selectedSession.calibration_baseline && (
+                <div className="flex justify-between text-[#334155]">
+                  <span className="text-[#64748B]">Zero Baseline:</span>
+                  <span className="font-mono text-[11px]">
+                    P:{selectedSession.calibration_baseline.baselinePitch > 0 ? '+' : ''}{selectedSession.calibration_baseline.baselinePitch}°, Y:{selectedSession.calibration_baseline.baselineYaw > 0 ? '+' : ''}{selectedSession.calibration_baseline.baselineYaw}°
+                  </span>
+                </div>
+              )}
 
               <div className="flex justify-between text-[#334155]">
                 <span className="text-[#64748B]">Participants:</span>

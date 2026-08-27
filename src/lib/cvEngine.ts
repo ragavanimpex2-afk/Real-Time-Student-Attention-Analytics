@@ -14,6 +14,8 @@ import {
   GazeDirection,
   DistractionState,
   DetectedEvent,
+  SessionMode,
+  PomodoroConfig,
 } from '../types';
 
 export const DEFAULT_WEIGHTS: AttentionWeightsConfig = {
@@ -83,6 +85,18 @@ export class AttentionCVEngine {
   private activeEvent: DetectedEvent | null = null;
   private manualOverrideState: DistractionState | null = null;
 
+  // Session mode & Rest / Break interval state
+  private sessionMode: SessionMode = 'exam';
+  private isBreakActive: boolean = false;
+
+  // Temporal hysteresis & Sustained Gating (prevents false alarms on brief typing glances or micro-movements)
+  private candidateDistractionState: DistractionState = 'focused';
+  private candidateDistractionSubreason: string | undefined = undefined;
+  private candidateStateStartMs: number = 0;
+  private confirmedDistractionState: DistractionState = 'focused';
+  private confirmedDistractionSubreason: string | undefined = undefined;
+  private faceAbsentStartMs: number = 0;
+
   // Performance metrics
   private lastFrameTimestamp: number = performance.now();
   private frameCount: number = 0;
@@ -99,6 +113,25 @@ export class AttentionCVEngine {
     this.callbacks = callbacks;
     if (initialWeights) {
       this.weights = { ...this.weights, ...initialWeights };
+    }
+  }
+
+  public setSessionMode(mode: SessionMode) {
+    this.sessionMode = mode;
+  }
+
+  public setBreakActive(isBreak: boolean) {
+    this.isBreakActive = isBreak;
+    if (isBreak) {
+      this.candidateDistractionState = 'break_rest';
+      this.confirmedDistractionState = 'break_rest';
+      this.candidateDistractionSubreason = 'Rest & Break Interval — Monitoring paused';
+      this.confirmedDistractionSubreason = 'Rest & Break Interval — Monitoring paused';
+    } else {
+      this.candidateDistractionState = 'focused';
+      this.confirmedDistractionState = 'focused';
+      this.candidateDistractionSubreason = undefined;
+      this.confirmedDistractionSubreason = undefined;
     }
   }
 
@@ -444,24 +477,32 @@ export class AttentionCVEngine {
         pitchDeg = this.calibration.isCalibrated ? rawPitchDeg - this.calibration.baselinePitch : rawPitchDeg;
         rollDeg = this.calibration.isCalibrated ? rawRollDeg - this.calibration.baselineRoll : rawRollDeg;
 
-        // Head alignment score (1.0 = facing screen directly)
-        const yawPenalty = Math.abs(yawDeg) / this.weights.headYawThresholdDeg;
-        const pitchPenalty = Math.abs(pitchDeg) / this.weights.headPitchThresholdDeg;
+        // Mode-dependent sensitivity parameters
+        const isStudyMode = this.sessionMode === 'pomodoro_rest';
+        const effectiveYawThreshold = isStudyMode ? 28 : this.weights.headYawThresholdDeg;
+        // Pitch deadband: Typing / notes range (+18° in Exam mode, +24° in Study mode)
+        const pitchDownLimit = isStudyMode ? 24 : 17;
+        const pitchUpLimit = isStudyMode ? -18 : -14;
+        const sustainedHysteresisMs = isStudyMode ? 2500 : 1800; // Temporal persistence needed
+
+        // Head alignment score (1.0 = facing screen directly) with typing deadzone
+        const yawPenalty = Math.max(0, Math.abs(yawDeg) - 4) / effectiveYawThreshold;
+        const pitchPenalty = Math.max(0, Math.abs(pitchDeg) - 5) / (isStudyMode ? 26 : this.weights.headPitchThresholdDeg);
         headAlignment = Math.max(0, 1.0 - Math.min(1.0, Math.sqrt(yawPenalty ** 2 + pitchPenalty ** 2) * 0.7));
 
-        // Accurate Gaze Direction Estimation
-        if (pitchDeg > 9 || lookDownScore > 0.38) {
+        // Accurate Gaze Direction Estimation (with natural typing tolerance)
+        if (pitchDeg > pitchDownLimit || lookDownScore > 0.65) {
           gazeDirection = 'away_down';
-          gazeForwardScore = Math.max(0, 1.0 - (Math.abs(pitchDeg) / 28 + lookDownScore * 0.5));
-        } else if (pitchDeg < -9 || lookUpScore > 0.38) {
+          gazeForwardScore = Math.max(0.1, 1.0 - (Math.abs(pitchDeg) / 35 + lookDownScore * 0.4));
+        } else if (pitchDeg < pitchUpLimit || lookUpScore > 0.48) {
           gazeDirection = 'away_up';
-          gazeForwardScore = Math.max(0, 1.0 - (Math.abs(pitchDeg) / 28 + lookUpScore * 0.5));
-        } else if (yawDeg > this.weights.headYawThresholdDeg || lookRightScore > 0.38) {
+          gazeForwardScore = Math.max(0.1, 1.0 - (Math.abs(pitchDeg) / 35 + lookUpScore * 0.4));
+        } else if (yawDeg > effectiveYawThreshold || lookRightScore > 0.48) {
           gazeDirection = 'away_right';
-          gazeForwardScore = Math.max(0, 1.0 - (Math.abs(yawDeg) / 40 + lookRightScore * 0.5));
-        } else if (yawDeg < -this.weights.headYawThresholdDeg || lookLeftScore > 0.38) {
+          gazeForwardScore = Math.max(0.1, 1.0 - (Math.abs(yawDeg) / 45 + lookRightScore * 0.4));
+        } else if (yawDeg < -effectiveYawThreshold || lookLeftScore > 0.48) {
           gazeDirection = 'away_left';
-          gazeForwardScore = Math.max(0, 1.0 - (Math.abs(yawDeg) / 40 + lookLeftScore * 0.5));
+          gazeForwardScore = Math.max(0.1, 1.0 - (Math.abs(yawDeg) / 45 + lookLeftScore * 0.4));
         } else {
           gazeDirection = 'forward';
           gazeForwardScore = 0.96;
@@ -490,7 +531,7 @@ export class AttentionCVEngine {
           }
         }
 
-        // Track temporal movement windows (for head dancing, rapid saccades, phone checking)
+        // Track temporal movement windows (for rapid saccades, phone checking)
         this.recentGazeDirections.push({ dir: gazeDirection, time: now });
         this.recentGazeDirections = this.recentGazeDirections.filter((g) => now - g.time <= 3500);
 
@@ -512,6 +553,7 @@ export class AttentionCVEngine {
         this.recentHeadPoses = this.recentHeadPoses.filter((p) => now - p.time <= 3000);
 
         // Calculate Multi-Axis Head Movement Variance & Directional Zero-Crossing Oscillations (Head Dancing)
+        // High threshold ensures normal keyboard typing rhythm is NEVER flagged as head dancing
         let isHeadDancing = false;
         compositeKinematicVariance = 0;
 
@@ -538,22 +580,23 @@ export class AttentionCVEngine {
           for (let i = 2; i < N; i++) {
             const dYawPrev = this.recentHeadPoses[i - 1].yaw - this.recentHeadPoses[i - 2].yaw;
             const dYawCurr = this.recentHeadPoses[i].yaw - this.recentHeadPoses[i - 1].yaw;
-            if (dYawPrev * dYawCurr < -1.8) directionalReversals++;
+            if (dYawPrev * dYawCurr < -4.0) directionalReversals++;
 
             const dPitchPrev = this.recentHeadPoses[i - 1].pitch - this.recentHeadPoses[i - 2].pitch;
             const dPitchCurr = this.recentHeadPoses[i].pitch - this.recentHeadPoses[i - 1].pitch;
-            if (dPitchPrev * dPitchCurr < -1.8) directionalReversals++;
+            if (dPitchPrev * dPitchCurr < -4.0) directionalReversals++;
           }
 
           compositeKinematicVariance = varYaw * 0.85 + varPitch * 1.1 + varRoll * 0.95 + varPos * 0.7;
-          motionIntensity = Math.min(100, Math.round((compositeKinematicVariance / 32) * 100));
+          motionIntensity = Math.min(100, Math.round((compositeKinematicVariance / 60) * 100));
 
-          if (compositeKinematicVariance > 30 || (directionalReversals >= 3 && compositeKinematicVariance > 14)) {
+          // Strict threshold: only erratic, violent multi-axis shaking (>120 deg^2) flags head dancing
+          if (compositeKinematicVariance > 125 || (directionalReversals >= 5 && compositeKinematicVariance > 75)) {
             isHeadDancing = true;
           }
         }
 
-        // Check for Rapid Gaze Darting / Saccadic restlessness (>= 3 direction shifts in 3.5s)
+        // Check for Rapid Gaze Darting / Saccadic restlessness (>= 4 direction shifts in 3.5s)
         let directionChanges = 0;
         for (let i = 1; i < this.recentGazeDirections.length; i++) {
           if (this.recentGazeDirections[i].dir !== this.recentGazeDirections[i - 1].dir) {
@@ -566,40 +609,94 @@ export class AttentionCVEngine {
           this.recentEyeOpennessValues.reduce((acc, v) => acc + v.val, 0) /
           (this.recentEyeOpennessValues.length || 1);
 
-        // Multi-Dimensional Distraction Classification Hierarchy
-        if (faceCount > 1) {
-          distractionState = 'multi_face_warning';
-          distractionSubreason = `${faceCount} subjects detected in frame (Single-student privacy policy)`;
+        // Step 1: Raw Instantaneous State Evaluation for Current Frame
+        let instantState: DistractionState = 'focused';
+        let instantSubreason: string | undefined = undefined;
+
+        if (this.isBreakActive) {
+          instantState = 'break_rest';
+          instantSubreason = 'Break / Rest interval active (monitoring suspended)';
+        } else if (faceCount > 1) {
+          instantState = 'multi_face_warning';
+          instantSubreason = `${faceCount} subjects detected in frame (Single-student privacy policy)`;
         } else if (
           !this.isEyeOccluded &&
           (this.isEyeClosed || (blinkLeftScore > 0.85 && blinkRightScore > 0.85)) &&
-          now - this.eyeClosedStartMs > 1200
+          now - this.eyeClosedStartMs > 1400
         ) {
-          distractionState = 'eyes_closed';
-          distractionSubreason = 'Continuous bilateral eye closure detected (>1.2s)';
-        } else if (!this.isEyeOccluded && avgRecentOpenness < 0.34 && this.recentEyeOpennessValues.length > 15) {
-          distractionState = 'drowsy_microsleep';
-          distractionSubreason = 'Drowsy pattern / low eyelid aperture';
+          instantState = 'eyes_closed';
+          instantSubreason = 'Continuous bilateral eye closure detected (>1.4s)';
+        } else if (!this.isEyeOccluded && avgRecentOpenness < 0.32 && this.recentEyeOpennessValues.length > 15) {
+          instantState = 'drowsy_microsleep';
+          instantSubreason = 'Drowsy pattern / low eyelid aperture';
         } else if (isHeadDancing) {
-          distractionState = 'rapid_gaze_darting';
-          distractionSubreason = `Active distraction: head dancing / motion variance (var=${Math.round(compositeKinematicVariance)})`;
-        } else if (directionChanges >= 3) {
-          distractionState = 'rapid_gaze_darting';
-          distractionSubreason = 'Rapid saccadic gaze darting / visual restlessness';
-        } else if (pitchDeg > 9 || lookDownScore > 0.40 || (pitchDeg > 6 && lookDownScore > 0.22)) {
-          distractionState = 'head_down_phone';
-          distractionSubreason = 'Looking down (phone or off-screen desk device)';
-        } else if (pitchDeg < -9 || lookUpScore > 0.40 || (pitchDeg < -6 && lookUpScore > 0.22)) {
-          distractionState = 'head_up_drift';
-          distractionSubreason = 'Head tilted upward / ceiling drift';
-        } else if (Math.abs(yawDeg) > this.weights.headYawThresholdDeg) {
-          distractionState = 'head_turned';
-          distractionSubreason = yawDeg > 0 ? 'Head turned right' : 'Head turned left';
-        } else if (lookLeftScore > 0.40 || lookRightScore > 0.40 || gazeDirection !== 'forward') {
-          distractionState = 'gaze_away';
-          distractionSubreason = `Gaze directed ${gazeDirection.replace('away_', '')}`;
+          instantState = 'rapid_gaze_darting';
+          instantSubreason = `Active distraction: erratic head motion variance (var=${Math.round(compositeKinematicVariance)})`;
+        } else if (directionChanges >= 4) {
+          instantState = 'rapid_gaze_darting';
+          instantSubreason = 'Rapid saccadic gaze darting across quadrants';
+        } else if (
+          (pitchDeg > (isStudyMode ? 25 : 18) && lookDownScore > 0.55) ||
+          pitchDeg > (isStudyMode ? 32 : 24) ||
+          (pitchDeg > (isStudyMode ? 20 : 15) && lookDownScore > 0.78)
+        ) {
+          // Downward phone check requiring extreme sustained tilt beyond normal typing keyboard range
+          instantState = 'head_down_phone';
+          instantSubreason = 'Looking down (sustained phone / off-desk device)';
+        } else if (pitchDeg < pitchUpLimit || (pitchDeg < -12 && lookUpScore > 0.50)) {
+          instantState = 'head_up_drift';
+          instantSubreason = 'Head tilted upward / ceiling drift';
+        } else if (Math.abs(yawDeg) > effectiveYawThreshold) {
+          instantState = 'head_turned';
+          instantSubreason = yawDeg > 0 ? 'Head turned right' : 'Head turned left';
+        } else if (lookLeftScore > 0.55 || lookRightScore > 0.55) {
+          instantState = 'gaze_away';
+          instantSubreason = `Gaze directed ${gazeDirection.replace('away_', '')}`;
         } else {
+          instantState = 'focused';
+        }
+
+        // Step 2: Temporal Hysteresis & Sustained Distraction Duration Gating
+        // Brief typing looks, momentary rest glances (<1.8s or <2.5s) are NOT flagged as distractions
+        if (this.isBreakActive) {
+          distractionState = 'break_rest';
+          distractionSubreason = 'Rest & Break Interval — Monitoring paused';
+          this.candidateDistractionState = 'break_rest';
+        } else if (instantState === 'multi_face_warning') {
+          // Multiple faces is a strict compliance trigger
+          distractionState = 'multi_face_warning';
+          distractionSubreason = instantSubreason;
+        } else if (instantState === 'focused') {
+          // Returns to center: immediately clear candidate timer and mark focused
+          this.candidateDistractionState = 'focused';
+          this.candidateDistractionSubreason = undefined;
+          this.candidateStateStartMs = 0;
+          this.confirmedDistractionState = 'focused';
+          this.confirmedDistractionSubreason = undefined;
           distractionState = 'focused';
+          distractionSubreason = undefined;
+        } else {
+          // Off-target posture detected: must persist continuously before triggering distraction
+          if (this.candidateDistractionState !== instantState) {
+            this.candidateDistractionState = instantState;
+            this.candidateDistractionSubreason = instantSubreason;
+            this.candidateStateStartMs = now;
+            // Still in grace period: report focused to avoid false alarm
+            distractionState = this.confirmedDistractionState === instantState ? instantState : 'focused';
+            distractionSubreason = this.confirmedDistractionState === instantState ? instantSubreason : undefined;
+          } else {
+            const sustainedDuration = now - this.candidateStateStartMs;
+            if (sustainedDuration >= sustainedHysteresisMs) {
+              this.confirmedDistractionState = instantState;
+              this.confirmedDistractionSubreason = instantSubreason;
+              distractionState = instantState;
+              distractionSubreason = instantSubreason;
+            } else {
+              // Within grace period (typing/momentary rest glance)
+              distractionState = this.confirmedDistractionState === instantState ? instantState : 'focused';
+              distractionSubreason = this.confirmedDistractionState === instantState ? instantSubreason : undefined;
+            }
+          }
         }
 
         // Render Academic Bounding Box, Additional Faces, and Overlay
@@ -615,8 +712,16 @@ export class AttentionCVEngine {
         );
       } else {
         facePresent = false;
-        distractionState = 'face_absent';
-        distractionSubreason = 'Subject not present in camera frame';
+        if (!this.faceAbsentStartMs) {
+          this.faceAbsentStartMs = now;
+        }
+        const absentDuration = now - this.faceAbsentStartMs;
+        if (absentDuration > 1400) {
+          distractionState = 'face_absent';
+          distractionSubreason = 'Subject not present in camera frame';
+        } else {
+          distractionState = 'focused';
+        }
         gazeForwardScore = 0;
         headAlignment = 0;
         eyeOpenness = 0;
@@ -742,26 +847,32 @@ export class AttentionCVEngine {
       }
     }
 
-    if (!facePresent) {
+    if (this.isBreakActive) {
+      distractionState = 'break_rest';
+      gazeForwardScore = 0.95;
+      headAlignment = 0.95;
+    } else if (!facePresent) {
       distractionState = 'face_absent';
       gazeForwardScore = 0;
       headAlignment = 0;
       this.renderFaceAbsentNotice(ctx, width, height);
     } else {
-      const isYawDistracted = Math.abs(yawDeg) > this.weights.headYawThresholdDeg;
-      const isPitchDistracted = Math.abs(pitchDeg) > this.weights.headPitchThresholdDeg;
+      const isStudyMode = this.sessionMode === 'pomodoro_rest';
+      const effectiveYaw = isStudyMode ? 28 : this.weights.headYawThresholdDeg;
+      const effectivePitchDown = isStudyMode ? 22 : 16;
+      const isYawDistracted = Math.abs(yawDeg) > effectiveYaw;
 
       if (isYawDistracted) {
         gazeDirection = yawDeg > 0 ? 'away_right' : 'away_left';
         distractionState = 'head_turned';
         gazeForwardScore = Math.max(0.2, 0.9 - Math.abs(yawDeg) / 50);
         headAlignment = Math.max(0.2, 0.9 - Math.abs(yawDeg) / 45);
-      } else if (pitchDeg > 12) {
+      } else if (pitchDeg > effectivePitchDown) {
         gazeDirection = 'away_down';
         distractionState = 'head_down_phone';
         gazeForwardScore = Math.max(0.3, 0.9 - Math.abs(pitchDeg) / 40);
         headAlignment = Math.max(0.3, 0.9 - Math.abs(pitchDeg) / 40);
-      } else if (pitchDeg < -14) {
+      } else if (pitchDeg < -16) {
         gazeDirection = 'away_up';
         distractionState = 'head_up_drift';
         gazeForwardScore = Math.max(0.3, 0.9 - Math.abs(pitchDeg) / 40);
@@ -1044,6 +1155,23 @@ export class AttentionCVEngine {
       return base;
     }
 
+    if (override === 'break_rest') {
+      base.face_present = true;
+      base.face_count = 1;
+      base.gaze_direction = 'forward';
+      base.gaze_forward_score = 0.95;
+      base.head_alignment = 0.95;
+      base.motion_intensity = 10;
+      base.motion_variance = 2.5;
+      base.distraction_state = 'break_rest';
+      base.distraction_subreason = 'Rest & Break Interval — Monitoring paused';
+      base.attention_score = 98;
+      if (base.bounding_box) {
+        this.renderOverlay(ctx, base.bounding_box, 'break_rest', base.fps, width, height);
+      }
+      return base;
+    }
+
     if (override === 'multi_face_warning') {
       base.face_present = true;
       base.face_count = 2;
@@ -1100,6 +1228,11 @@ export class AttentionCVEngine {
     headAlignment: number,
     distractionState?: DistractionState
   ): number {
+    // If break / rest interval is active, award full score without penalties
+    if (this.isBreakActive || distractionState === 'break_rest') {
+      return 100;
+    }
+
     // Multi-face policy: Pause attention scoring per privacy protocol
     if (faceCount > 1) {
       return 50;
@@ -1131,6 +1264,16 @@ export class AttentionCVEngine {
    * 3. Finalize and record complete event duration when subject returns to focus
    */
   private evaluateDistractionEvents(telemetry: CVTelemetryFrame, now: number) {
+    // Distraction events are never logged or penalized during active rest breaks
+    if (this.isBreakActive || telemetry.distraction_state === 'break_rest') {
+      if (this.currentDistractionType !== null && this.activeEvent) {
+        this.currentDistractionType = null;
+        this.distractionStartMs = 0;
+        this.activeEvent = null;
+      }
+      return;
+    }
+
     const isDistracted = telemetry.distraction_state !== 'focused';
 
     if (isDistracted) {
@@ -1220,12 +1363,15 @@ export class AttentionCVEngine {
   ) {
     if (!box) return;
 
-    const isDistracted = distractionState !== 'focused';
-    const strokeColor = isDistracted ? '#DC2626' : '#2563EB'; // Red if distracted, Blue if focused
-    const labelBgColor = isDistracted ? '#DC2626' : '#2563EB';
+    const isBreak = distractionState === 'break_rest' || this.isBreakActive;
+    const isDistracted = !isBreak && distractionState !== 'focused';
+    const strokeColor = isBreak ? '#059669' : isDistracted ? '#DC2626' : '#2563EB'; // Green if break, Red if distracted, Blue if focused
+    const labelBgColor = isBreak ? '#059669' : isDistracted ? '#DC2626' : '#2563EB';
     
     let tagText = `ID:PRIMARY | CONF:${Math.round((box.confidence || 0.98) * 100)}%`;
-    if (distractionState === 'multi_face_warning') {
+    if (isBreak) {
+      tagText = '☕ REST BREAK | PHONE / DESK ALLOWED';
+    } else if (distractionState === 'multi_face_warning') {
       tagText = 'WARNING | MULTIPLE FACES DETECTED';
     } else if (distractionState === 'head_turned') {
       tagText = 'DISTRACTED | HEAD TURNED';
@@ -1240,7 +1386,7 @@ export class AttentionCVEngine {
     } else if (distractionState === 'drowsy_microsleep') {
       tagText = 'WARNING | DROWSY MICROSLEEP';
     } else if (distractionState === 'rapid_gaze_darting') {
-      tagText = 'DISTRACTED | HEAD DANCING / GAZE DARTING';
+      tagText = 'DISTRACTED | RAPID GAZE DARTING';
     }
 
     // 1. Draw Corner HUD Box for Primary Face
