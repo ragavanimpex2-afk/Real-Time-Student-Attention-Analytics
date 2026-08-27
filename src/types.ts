@@ -67,6 +67,16 @@ export interface AttentionWeightsConfig {
   headPitchThresholdDeg: number; // default 20 deg
 }
 
+export interface CalibrationBaseline {
+  isCalibrated: boolean;
+  baselinePitch: number;
+  baselineYaw: number;
+  baselineRoll: number;
+  baselineEAR: number;
+  calibratedAt?: string;
+  samplesCount?: number;
+}
+
 export interface DetectedEvent {
   id: string;
   time: string; // e.g. "10:14"

@@ -15,6 +15,7 @@ import {
   Smile,
   RefreshCw,
   Sparkles,
+  Target,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -27,6 +28,7 @@ import {
 import {
   CVTelemetryFrame,
   AttentionWeightsConfig,
+  CalibrationBaseline,
   DetectedEvent,
   SessionData,
   TimelineDataPoint,
@@ -34,6 +36,7 @@ import {
 } from '../types';
 import { AttentionCVEngine, DEFAULT_WEIGHTS } from '../lib/cvEngine';
 import { MotionSparkline } from '../components/MotionSparkline';
+import { CalibrationStep } from '../components/CalibrationStep';
 
 interface LiveSessionPageProps {
   weights: AttentionWeightsConfig;
@@ -78,7 +81,15 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
   });
 
   const [sessionStartTime] = useState<number>(Date.now());
+  const [sessionActualStartTime, setSessionActualStartTime] = useState<number>(Date.now());
   const [elapsedSec, setElapsedSec] = useState<number>(0);
+  const [isCalibrating, setIsCalibrating] = useState<boolean>(true);
+  const [isRecalibrating, setIsRecalibrating] = useState<boolean>(false);
+  const [calibrationBaseline, setCalibrationBaseline] = useState<CalibrationBaseline | null>(null);
+  const [calibrationNotification, setCalibrationNotification] = useState<string | null>(null);
+  const isCalibratingRef = useRef<boolean>(true);
+  isCalibratingRef.current = isCalibrating;
+
   const [timelineHistory, setTimelineHistory] = useState<
     Array<{ time: string; score: number; offsetSec: number }>
   >([]);
@@ -141,9 +152,11 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
 
     setupCamera();
 
-    // Session Timer (Ticks every second)
+    // Session Timer (Ticks every second only after calibration step)
     const timerInterval = setInterval(() => {
-      setElapsedSec((prev) => prev + 1);
+      if (!isCalibratingRef.current) {
+        setElapsedSec((prev) => prev + 1);
+      }
     }, 1000);
 
     return () => {
@@ -267,6 +280,49 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
     if (engineRef.current) {
       engineRef.current.setManualOverride(state);
     }
+  };
+
+  // Calibration flow handlers
+  const handleCalibrationComplete = (baseline: CalibrationBaseline) => {
+    setCalibrationBaseline(baseline);
+    setIsCalibrating(false);
+    setIsRecalibrating(false);
+
+    if (engineRef.current) {
+      engineRef.current.setCalibrationBaseline(baseline);
+    }
+
+    // Reset accumulated metrics so analytics recording starts clean from calibrated baseline
+    statsRef.current = {
+      totalFrames: 0,
+      facePresentFrames: 0,
+      forwardGazeFrames: 0,
+      scoreHistory: [],
+      timelinePoints: [],
+      completedEvents: [],
+      activeEvent: null,
+      lastSecondRecorded: -1,
+    };
+    setElapsedSec(0);
+    setSessionActualStartTime(Date.now());
+
+    setCalibrationNotification(
+      `Personalized Baseline Saved: Natural resting pitch (${baseline.baselinePitch > 0 ? '+' : ''}${baseline.baselinePitch}°) & yaw (${baseline.baselineYaw > 0 ? '+' : ''}${baseline.baselineYaw}°) zeroed as center.`
+    );
+
+    setTimeout(() => {
+      setCalibrationNotification(null);
+    }, 4500);
+  };
+
+  const handleSkipCalibration = () => {
+    setIsCalibrating(false);
+    setIsRecalibrating(false);
+  };
+
+  const handleStartRecalibration = () => {
+    setIsRecalibrating(true);
+    setIsCalibrating(true);
   };
 
   // Format Elapsed Time (HH:MM:SS)
@@ -396,14 +452,28 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
             <Shield className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs font-bold text-[#0F172A] tracking-wider uppercase">
-              PRIVACY ENFORCEMENT ACTIVE
+            <div className="text-xs font-bold text-[#0F172A] tracking-wider uppercase flex items-center gap-2">
+              <span>PRIVACY ENFORCEMENT ACTIVE</span>
+              {calibrationBaseline?.isCalibrated && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-bold border border-blue-200">
+                  <Target className="w-3 h-3" />
+                  Calibrated (P: {calibrationBaseline.baselinePitch > 0 ? '+' : ''}{calibrationBaseline.baselinePitch}°, Y: {calibrationBaseline.baselineYaw > 0 ? '+' : ''}{calibrationBaseline.baselineYaw}°)
+                </span>
+              )}
             </div>
             <div className="text-xs text-[#64748B]">Local Edge Processing • Zero Video Stored</div>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleStartRecalibration}
+            className="text-xs font-semibold text-[#0F172A] hover:text-blue-600 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+          >
+            <Target className="w-3.5 h-3.5 text-blue-600" />
+            <span>Recalibrate Baseline</span>
+          </button>
+
           <button
             onClick={onOpenSettings}
             className="text-xs font-semibold text-[#64748B] hover:text-[#0F172A] flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC]"
@@ -418,6 +488,22 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Baseline Calibration Success Notification Banner */}
+      {calibrationNotification && (
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center justify-between shadow-xs animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="font-medium">{calibrationNotification}</span>
+          </div>
+          <button
+            onClick={() => setCalibrationNotification(null)}
+            className="text-xs text-emerald-700 hover:text-emerald-900 font-bold px-2 py-0.5"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {cameraError && (
         <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center gap-2.5">
@@ -448,6 +534,16 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
               ref={canvasRef}
               className="absolute inset-0 w-full h-full object-cover pointer-events-none"
             />
+
+            {/* 5-Second Personalized Calibration Step Overlay */}
+            {isCalibrating && (
+              <CalibrationStep
+                latestFrame={latestFrame}
+                onCalibrationComplete={handleCalibrationComplete}
+                onSkip={handleSkipCalibration}
+                isRecalibrating={isRecalibrating}
+              />
+            )}
 
             {/* Top HUD Badges */}
             <div className="absolute top-4 left-4 flex items-center gap-2 z-10">
@@ -490,11 +586,23 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
 
             {/* Bottom Controls Overlay */}
             <div className="absolute bottom-4 inset-x-4 flex items-center justify-between z-10 pointer-events-auto">
-              <div className="px-3 py-1.5 bg-black/80 backdrop-blur-xs text-white text-xs rounded-lg border border-white/10 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-red-600 animate-ping"></span>
-                <span className="font-mono font-bold tracking-wider">
-                  {formatTime(elapsedSec)} LIVE
-                </span>
+              <div className="flex items-center gap-2">
+                <div className="px-3 py-1.5 bg-black/80 backdrop-blur-xs text-white text-xs rounded-lg border border-white/10 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-red-600 animate-ping"></span>
+                  <span className="font-mono font-bold tracking-wider">
+                    {isCalibrating ? 'CALIBRATING...' : `${formatTime(elapsedSec)} LIVE`}
+                  </span>
+                </div>
+
+                <button
+                  id="btn-recalibrate-hud"
+                  onClick={handleStartRecalibration}
+                  className="px-2.5 py-1.5 bg-black/70 hover:bg-black/90 backdrop-blur-xs text-white text-xs font-medium rounded-lg border border-white/15 transition-colors flex items-center gap-1.5 cursor-pointer"
+                  title="Recalibrate head posture and gaze baseline"
+                >
+                  <Target className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="hidden sm:inline">Zero Baseline</span>
+                </button>
               </div>
 
               <div className="flex items-center gap-2">
@@ -655,6 +763,15 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                 }`}
               >
                 Face Absent
+              </button>
+
+              <button
+                type="button"
+                onClick={handleStartRecalibration}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-all flex items-center gap-1.5 cursor-pointer ml-auto"
+              >
+                <Target className="w-3.5 h-3.5" />
+                <span>Run 5s Calibration</span>
               </button>
             </div>
           </div>

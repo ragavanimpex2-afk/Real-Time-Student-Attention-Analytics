@@ -10,6 +10,7 @@
 import {
   CVTelemetryFrame,
   AttentionWeightsConfig,
+  CalibrationBaseline,
   GazeDirection,
   DistractionState,
   DetectedEvent,
@@ -25,6 +26,14 @@ export const DEFAULT_WEIGHTS: AttentionWeightsConfig = {
   headPitchThresholdDeg: 18,
 };
 
+export const DEFAULT_CALIBRATION: CalibrationBaseline = {
+  isCalibrated: false,
+  baselinePitch: 0,
+  baselineYaw: 0,
+  baselineRoll: 0,
+  baselineEAR: 0.28,
+};
+
 export interface CVEngineCallbacks {
   onTelemetry: (frame: CVTelemetryFrame) => void;
   onEventDetected: (event: DetectedEvent) => void;
@@ -38,6 +47,7 @@ export class AttentionCVEngine {
   private animFrameId: number | null = null;
   private isRunning: boolean = false;
   private weights: AttentionWeightsConfig = { ...DEFAULT_WEIGHTS };
+  private calibration: CalibrationBaseline = { ...DEFAULT_CALIBRATION };
   private callbacks: CVEngineCallbacks;
 
   // Real-time tracking state
@@ -94,6 +104,22 @@ export class AttentionCVEngine {
 
   public updateWeights(newWeights: Partial<AttentionWeightsConfig>) {
     this.weights = { ...this.weights, ...newWeights };
+  }
+
+  public setCalibrationBaseline(baseline: CalibrationBaseline) {
+    this.calibration = { ...baseline };
+    if (baseline.baselineEAR > 0.18) {
+      this.runningBaselineEAR = baseline.baselineEAR;
+    }
+  }
+
+  public getCalibrationBaseline(): CalibrationBaseline {
+    return { ...this.calibration };
+  }
+
+  public resetCalibration() {
+    this.calibration = { ...DEFAULT_CALIBRATION };
+    this.runningBaselineEAR = 0.28;
   }
 
   public setManualOverride(state: DistractionState | null) {
@@ -329,16 +355,21 @@ export class AttentionCVEngine {
         const faceHeight = Math.hypot(chin.x - forehead.x, chin.y - forehead.y) || 0.001;
 
         // Accurate Yaw estimation using bilateral cheek distance ratio and relative nose offset
-        yawDeg = ((nose.x - midCheekX) / cheekDist) * 90;
+        const rawYawDeg = ((nose.x - midCheekX) / cheekDist) * 90;
 
         // Accurate Pitch estimation: ratio of nose-to-forehead vs nose-to-chin
         const noseToForehead = Math.hypot(nose.x - forehead.x, nose.y - forehead.y);
         const noseToChin = Math.hypot(nose.x - chin.x, nose.y - chin.y);
         const pitchRatio = (noseToForehead - noseToChin) / faceHeight;
-        pitchDeg = pitchRatio * 55; // positive = looking down (pitch down/phone), negative = looking up
+        const rawPitchDeg = pitchRatio * 55; // positive = looking down (pitch down/phone), negative = looking up
 
         // Roll estimation
-        rollDeg = Math.atan2(rightCheek.y - leftCheek.y, rightCheek.x - leftCheek.x) * (180 / Math.PI);
+        const rawRollDeg = Math.atan2(rightCheek.y - leftCheek.y, rightCheek.x - leftCheek.x) * (180 / Math.PI);
+
+        // Apply personalized calibration baseline offsets (zeros out natural head tilts/camera angles)
+        yawDeg = this.calibration.isCalibrated ? rawYawDeg - this.calibration.baselineYaw : rawYawDeg;
+        pitchDeg = this.calibration.isCalibrated ? rawPitchDeg - this.calibration.baselinePitch : rawPitchDeg;
+        rollDeg = this.calibration.isCalibrated ? rawRollDeg - this.calibration.baselineRoll : rawRollDeg;
 
         // Head alignment score (1.0 = facing screen directly)
         const yawPenalty = Math.abs(yawDeg) / this.weights.headYawThresholdDeg;
