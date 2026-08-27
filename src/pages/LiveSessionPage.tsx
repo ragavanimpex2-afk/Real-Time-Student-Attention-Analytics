@@ -714,7 +714,19 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                     : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F8FAFC]'
                 }`}
               >
-                Phone / Desk Check (Pitch Down)
+                Head Down (Phone/Desk)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTriggerOverride('head_up_drift')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  activeManualTrigger === 'head_up_drift'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                    : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                }`}
+              >
+                Head Up (Ceiling Drift)
               </button>
 
               <button
@@ -731,6 +743,30 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
 
               <button
                 type="button"
+                onClick={() => handleTriggerOverride('multi_face_warning')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  activeManualTrigger === 'multi_face_warning'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                    : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                }`}
+              >
+                Multiple Faces (2+ Subjects)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTriggerOverride('eyes_closed')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  activeManualTrigger === 'eyes_closed'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                    : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                }`}
+              >
+                Eyes Closed (&gt;1.2s)
+              </button>
+
+              <button
+                type="button"
                 onClick={() => handleTriggerOverride('drowsy_microsleep')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
                   activeManualTrigger === 'drowsy_microsleep'
@@ -738,7 +774,7 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                     : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F8FAFC]'
                 }`}
               >
-                Drowsy Microsleep (Low Aperture)
+                Drowsy Microsleep
               </button>
 
               <button
@@ -821,6 +857,17 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                 style={{ width: `${Math.max(3, latestFrame.attention_score)}%` }}
               ></div>
             </div>
+
+            {/* Distraction Subreason Diagnostic Tag */}
+            {latestFrame.distraction_state !== 'focused' && latestFrame.distraction_subreason && (
+              <div className="p-2.5 bg-amber-50/80 border border-amber-200/80 rounded-lg text-[11px] text-amber-900 flex items-start gap-1.5 leading-snug">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold">Detection Diagnostic: </span>
+                  <span>{latestFrame.distraction_subreason}</span>
+                </div>
+              </div>
+            )}
 
             {/* Subtext info */}
             <div className="flex items-center justify-between text-xs text-[#64748B]">

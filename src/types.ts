@@ -55,6 +55,14 @@ export interface CVTelemetryFrame {
     height: number;
     confidence: number;
   };
+  additional_faces?: Array<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    confidence: number;
+    label: string;
+  }>;
 }
 
 export interface AttentionWeightsConfig {

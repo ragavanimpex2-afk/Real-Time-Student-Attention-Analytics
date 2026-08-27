@@ -143,7 +143,10 @@ export class AttentionCVEngine {
         },
         outputFaceBlendshapes: true,
         runningMode: 'VIDEO',
-        numFaces: 2, // Detect up to 2 faces to enforce single-subject policy
+        numFaces: 4, // Detect up to 4 faces to enforce multi-subject security & single-student policy
+        minFaceDetectionConfidence: 0.35,
+        minFacePresenceConfidence: 0.35,
+        minTrackingConfidence: 0.35,
       });
 
       this.isMediaPipeReady = true;
@@ -266,7 +269,9 @@ export class AttentionCVEngine {
     let rollDeg = 0;
     let blinkDetected = false;
     let distractionState: DistractionState = 'focused';
+    let distractionSubreason: string | undefined = undefined;
     let boundingBox: CVTelemetryFrame['bounding_box'] = undefined;
+    const additionalFaces: NonNullable<CVTelemetryFrame['additional_faces']> = [];
     let compositeKinematicVariance = 0;
     let motionIntensity = 10;
 
@@ -277,13 +282,9 @@ export class AttentionCVEngine {
         faceCount = results.faceLandmarks.length;
         facePresent = true;
 
-        if (faceCount > 1) {
-          distractionState = 'multi_face_warning';
-        }
-
         const landmarks = results.faceLandmarks[0];
 
-        // Compute Bounding Box
+        // Compute Primary Face Bounding Box
         let minX = 1,
           maxX = 0,
           minY = 1,
@@ -295,7 +296,7 @@ export class AttentionCVEngine {
           if (pt.y > maxY) maxY = pt.y;
         }
 
-        // Add 8% margin for face boundary
+        // Add margin for face boundary
         const boxX = Math.max(0, (minX - 0.04) * width);
         const boxY = Math.max(0, (minY - 0.06) * height);
         const boxW = Math.min(width - boxX, (maxX - minX + 0.08) * width);
@@ -308,6 +309,55 @@ export class AttentionCVEngine {
           height: boxH,
           confidence: 0.98,
         };
+
+        // Extract Secondary / Multiple Face Bounding Boxes
+        if (faceCount > 1) {
+          for (let f = 1; f < results.faceLandmarks.length; f++) {
+            const fLandmarks = results.faceLandmarks[f];
+            let fMinX = 1,
+              fMaxX = 0,
+              fMinY = 1,
+              fMaxY = 0;
+            for (const pt of fLandmarks) {
+              if (pt.x < fMinX) fMinX = pt.x;
+              if (pt.x > fMaxX) fMaxX = pt.x;
+              if (pt.y < fMinY) fMinY = pt.y;
+              if (pt.y > fMaxY) fMaxY = pt.y;
+            }
+            const fBoxX = Math.max(0, (fMinX - 0.03) * width);
+            const fBoxY = Math.max(0, (fMinY - 0.05) * height);
+            const fBoxW = Math.min(width - fBoxX, (fMaxX - fMinX + 0.06) * width);
+            const fBoxH = Math.min(height - fBoxY, (fMaxY - fMinY + 0.10) * height);
+
+            additionalFaces.push({
+              x: fBoxX,
+              y: fBoxY,
+              width: fBoxW,
+              height: fBoxH,
+              confidence: 0.94,
+              label: `SECONDARY SUBJECT (FACE #${f + 1})`,
+            });
+          }
+        }
+
+        // Extract blendshapes for primary face
+        const blendshapes: Record<string, number> = {};
+        if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+          for (const cat of results.faceBlendshapes[0].categories) {
+            blendshapes[cat.categoryName] = cat.score;
+          }
+        }
+
+        const lookDownScore =
+          ((blendshapes['eyeLookDownLeft'] || 0) + (blendshapes['eyeLookDownRight'] || 0)) / 2;
+        const lookUpScore =
+          ((blendshapes['eyeLookUpLeft'] || 0) + (blendshapes['eyeLookUpRight'] || 0)) / 2;
+        const lookLeftScore =
+          ((blendshapes['eyeLookOutLeft'] || 0) + (blendshapes['eyeLookInRight'] || 0)) / 2;
+        const lookRightScore =
+          ((blendshapes['eyeLookInLeft'] || 0) + (blendshapes['eyeLookOutRight'] || 0)) / 2;
+        const blinkLeftScore = blendshapes['eyeBlinkLeft'] || 0;
+        const blinkRightScore = blendshapes['eyeBlinkRight'] || 0;
 
         // Eye openness (EAR formula)
         // Left eye indices: 33, 160, 158, 133, 153, 144
@@ -323,19 +373,17 @@ export class AttentionCVEngine {
         }
 
         // Tighter Occlusion vs Blink Discrimination
-        // Asymmetry indicates hand touching face, side hair, extreme single-eye occlusion, or reflection
         const earAsymmetry = Math.abs(earLeft - earRight);
         const dynamicBlinkEarThreshold = Math.max(0.13, this.runningBaselineEAR * 0.55);
-        const isAsymmetricOcclusion = earAsymmetry > 0.14 && Math.max(earLeft, earRight) > dynamicBlinkEarThreshold + 0.04;
+        const isAsymmetricOcclusion =
+          earAsymmetry > 0.14 && Math.max(earLeft, earRight) > dynamicBlinkEarThreshold + 0.04;
 
         if (isAsymmetricOcclusion) {
           this.isEyeOccluded = true;
-          // Use the unobstructed eye's aperture for attention proxy to prevent false closure/blink flags
           const maxEyeEar = Math.max(earLeft, earRight);
           eyeOpennessLeft = Math.min(1.0, maxEyeEar / this.runningBaselineEAR);
           eyeOpennessRight = Math.min(1.0, maxEyeEar / this.runningBaselineEAR);
           eyeOpenness = Math.min(1.0, maxEyeEar / this.runningBaselineEAR);
-          // Cancel closed eye timer so occlusion does not trigger false positive microsleep or blink
           this.isEyeClosed = false;
         } else {
           this.isEyeOccluded = false;
@@ -344,24 +392,49 @@ export class AttentionCVEngine {
           eyeOpenness = (eyeOpennessLeft + eyeOpennessRight) / 2;
         }
 
-        // Head pose from key anchor points (Nose tip 1, Chin 152, Forehead 10, Left temple 33, Right temple 263)
+        // Head pose from key anchor points (Nose tip 1, Chin 152, Forehead 10, Left temple 234, Right temple 454)
         const nose = landmarks[1];
         const chin = landmarks[152];
         const forehead = landmarks[10];
         const leftCheek = landmarks[234];
         const rightCheek = landmarks[454];
-        const cheekDist = Math.hypot(rightCheek.x - leftCheek.x, rightCheek.y - leftCheek.y) || 0.001;
-        const midCheekX = (leftCheek.x + rightCheek.x) / 2;
-        const faceHeight = Math.hypot(chin.x - forehead.x, chin.y - forehead.y) || 0.001;
 
-        // Accurate Yaw estimation using bilateral cheek distance ratio and relative nose offset
-        const rawYawDeg = ((nose.x - midCheekX) / cheekDist) * 90;
+        // 3D vector pitch
+        const dy10_152 = chin.y - forehead.y;
+        const dz10_152 = (chin.z || 0) - (forehead.z || 0);
+        const pitch3DDeg = Math.atan2(dz10_152, Math.max(0.001, dy10_152)) * (180 / Math.PI) * 2.2;
 
-        // Accurate Pitch estimation: ratio of nose-to-forehead vs nose-to-chin
+        // 2D vertical perspective ratio (ratio of nose-to-forehead vs nose-to-chin)
         const noseToForehead = Math.hypot(nose.x - forehead.x, nose.y - forehead.y);
         const noseToChin = Math.hypot(nose.x - chin.x, nose.y - chin.y);
-        const pitchRatio = (noseToForehead - noseToChin) / faceHeight;
-        const rawPitchDeg = pitchRatio * 55; // positive = looking down (pitch down/phone), negative = looking up
+        const faceHeight = Math.hypot(chin.x - forehead.x, chin.y - forehead.y) || 0.001;
+        const pitch2DRatio = (noseToForehead - noseToChin) / faceHeight;
+        const pitch2DDeg = pitch2DRatio * 65;
+
+        // Fusion raw pitch estimate
+        let rawPitchDeg = pitch3DDeg * 0.45 + pitch2DDeg * 0.55;
+        if (lookDownScore > 0.35) {
+          rawPitchDeg += lookDownScore * 18;
+        } else if (lookUpScore > 0.35) {
+          rawPitchDeg -= lookUpScore * 18;
+        }
+
+        // 3D vector yaw
+        const dxCheek = rightCheek.x - leftCheek.x;
+        const dzCheek = (rightCheek.z || 0) - (leftCheek.z || 0);
+        const yaw3DDeg = Math.atan2(dzCheek, Math.max(0.001, Math.abs(dxCheek))) * (180 / Math.PI) * 1.9;
+
+        // 2D horizontal perspective
+        const cheekDist = Math.hypot(rightCheek.x - leftCheek.x, rightCheek.y - leftCheek.y) || 0.001;
+        const midCheekX = (leftCheek.x + rightCheek.x) / 2;
+        const yaw2DDeg = ((nose.x - midCheekX) / cheekDist) * 90;
+
+        let rawYawDeg = yaw3DDeg * 0.45 + yaw2DDeg * 0.55;
+        if (lookRightScore > 0.35) {
+          rawYawDeg += lookRightScore * 14;
+        } else if (lookLeftScore > 0.35) {
+          rawYawDeg -= lookLeftScore * 14;
+        }
 
         // Roll estimation
         const rawRollDeg = Math.atan2(rightCheek.y - leftCheek.y, rightCheek.x - leftCheek.x) * (180 / Math.PI);
@@ -376,23 +449,29 @@ export class AttentionCVEngine {
         const pitchPenalty = Math.abs(pitchDeg) / this.weights.headPitchThresholdDeg;
         headAlignment = Math.max(0, 1.0 - Math.min(1.0, Math.sqrt(yawPenalty ** 2 + pitchPenalty ** 2) * 0.7));
 
-        // Gaze estimation from yaw and pitch
-        if (Math.abs(yawDeg) > this.weights.headYawThresholdDeg) {
-          gazeDirection = yawDeg > 0 ? 'away_right' : 'away_left';
-          gazeForwardScore = Math.max(0, 1.0 - Math.abs(yawDeg) / 45);
-        } else if (pitchDeg > this.weights.headPitchThresholdDeg - 4) {
+        // Accurate Gaze Direction Estimation
+        if (pitchDeg > 9 || lookDownScore > 0.38) {
           gazeDirection = 'away_down';
-          gazeForwardScore = Math.max(0, 1.0 - Math.abs(pitchDeg) / 30);
-        } else if (pitchDeg < -this.weights.headPitchThresholdDeg + 4) {
+          gazeForwardScore = Math.max(0, 1.0 - (Math.abs(pitchDeg) / 28 + lookDownScore * 0.5));
+        } else if (pitchDeg < -9 || lookUpScore > 0.38) {
           gazeDirection = 'away_up';
-          gazeForwardScore = Math.max(0, 1.0 - Math.abs(pitchDeg) / 30);
+          gazeForwardScore = Math.max(0, 1.0 - (Math.abs(pitchDeg) / 28 + lookUpScore * 0.5));
+        } else if (yawDeg > this.weights.headYawThresholdDeg || lookRightScore > 0.38) {
+          gazeDirection = 'away_right';
+          gazeForwardScore = Math.max(0, 1.0 - (Math.abs(yawDeg) / 40 + lookRightScore * 0.5));
+        } else if (yawDeg < -this.weights.headYawThresholdDeg || lookLeftScore > 0.38) {
+          gazeDirection = 'away_left';
+          gazeForwardScore = Math.max(0, 1.0 - (Math.abs(yawDeg) / 40 + lookLeftScore * 0.5));
         } else {
           gazeDirection = 'forward';
           gazeForwardScore = 0.96;
         }
 
         // Robust Blink Detection with tight physiological temporal & refractory gating
-        const isBilateralClosed = earLeft < dynamicBlinkEarThreshold && earRight < dynamicBlinkEarThreshold;
+        const isBilateralClosed =
+          (earLeft < dynamicBlinkEarThreshold && earRight < dynamicBlinkEarThreshold) ||
+          (blinkLeftScore > 0.75 && blinkRightScore > 0.75);
+
         if (!this.isEyeOccluded && isBilateralClosed) {
           if (!this.isEyeClosed) {
             this.isEyeClosed = true;
@@ -401,7 +480,6 @@ export class AttentionCVEngine {
         } else {
           if (this.isEyeClosed) {
             const closureDuration = now - this.eyeClosedStartMs;
-            // Human physiological blink duration is strictly 80ms - 460ms with a minimum 140ms refractory recovery
             if (closureDuration >= 80 && closureDuration <= 460 && now - this.lastBlinkEndedMs >= 140) {
               blinkDetected = true;
               this.blinkCount++;
@@ -435,7 +513,7 @@ export class AttentionCVEngine {
 
         // Calculate Multi-Axis Head Movement Variance & Directional Zero-Crossing Oscillations (Head Dancing)
         let isHeadDancing = false;
-        let compositeKinematicVariance = 0;
+        compositeKinematicVariance = 0;
 
         if (this.recentHeadPoses.length >= 8) {
           const N = this.recentHeadPoses.length;
@@ -448,9 +526,14 @@ export class AttentionCVEngine {
           const varYaw = this.recentHeadPoses.reduce((acc, p) => acc + (p.yaw - meanYaw) ** 2, 0) / N;
           const varPitch = this.recentHeadPoses.reduce((acc, p) => acc + (p.pitch - meanPitch) ** 2, 0) / N;
           const varRoll = this.recentHeadPoses.reduce((acc, p) => acc + (p.roll - meanRoll) ** 2, 0) / N;
-          const varPos = this.recentHeadPoses.reduce((acc, p) => acc + (p.centerX - meanX) ** 2 + (p.centerY - meanY) ** 2, 0) / N * 10000;
+          const varPos =
+            (this.recentHeadPoses.reduce(
+              (acc, p) => acc + (p.centerX - meanX) ** 2 + (p.centerY - meanY) ** 2,
+              0
+            ) /
+              N) *
+            10000;
 
-          // Count directional reversals across consecutive frames (identifies rhythmic head bobbing, shaking, dancing)
           let directionalReversals = 0;
           for (let i = 2; i < N; i++) {
             const dYawPrev = this.recentHeadPoses[i - 1].yaw - this.recentHeadPoses[i - 2].yaw;
@@ -462,11 +545,9 @@ export class AttentionCVEngine {
             if (dPitchPrev * dPitchCurr < -1.8) directionalReversals++;
           }
 
-          // Composite Kinematic Energy Formula
           compositeKinematicVariance = varYaw * 0.85 + varPitch * 1.1 + varRoll * 0.95 + varPos * 0.7;
           motionIntensity = Math.min(100, Math.round((compositeKinematicVariance / 32) * 100));
 
-          // Detect active head dancing / rhythmic motion distraction
           if (compositeKinematicVariance > 30 || (directionalReversals >= 3 && compositeKinematicVariance > 14)) {
             isHeadDancing = true;
           }
@@ -480,20 +561,22 @@ export class AttentionCVEngine {
           }
         }
 
-        // Check for Drowsy Microsleeps (Average eye openness < 0.35 over rolling window)
+        // Check for Drowsy Microsleeps
         const avgRecentOpenness =
           this.recentEyeOpennessValues.reduce((acc, v) => acc + v.val, 0) /
           (this.recentEyeOpennessValues.length || 1);
 
-        // Advanced Multi-Dimensional Distraction Classification Hierarchy
-        let distractionSubreason: string | undefined = undefined;
-
+        // Multi-Dimensional Distraction Classification Hierarchy
         if (faceCount > 1) {
           distractionState = 'multi_face_warning';
-          distractionSubreason = 'Multiple subjects detected in view';
-        } else if (!this.isEyeOccluded && this.isEyeClosed && now - this.eyeClosedStartMs > 1400) {
+          distractionSubreason = `${faceCount} subjects detected in frame (Single-student privacy policy)`;
+        } else if (
+          !this.isEyeOccluded &&
+          (this.isEyeClosed || (blinkLeftScore > 0.85 && blinkRightScore > 0.85)) &&
+          now - this.eyeClosedStartMs > 1200
+        ) {
           distractionState = 'eyes_closed';
-          distractionSubreason = 'Continuous bilateral eye closure detected (>1.4s)';
+          distractionSubreason = 'Continuous bilateral eye closure detected (>1.2s)';
         } else if (!this.isEyeOccluded && avgRecentOpenness < 0.34 && this.recentEyeOpennessValues.length > 15) {
           distractionState = 'drowsy_microsleep';
           distractionSubreason = 'Drowsy pattern / low eyelid aperture';
@@ -503,28 +586,37 @@ export class AttentionCVEngine {
         } else if (directionChanges >= 3) {
           distractionState = 'rapid_gaze_darting';
           distractionSubreason = 'Rapid saccadic gaze darting / visual restlessness';
-        } else if (pitchDeg > 12 || gazeDirection === 'away_down') {
-          // Responsive phone / desk downward gaze detection
+        } else if (pitchDeg > 9 || lookDownScore > 0.40 || (pitchDeg > 6 && lookDownScore > 0.22)) {
           distractionState = 'head_down_phone';
           distractionSubreason = 'Looking down (phone or off-screen desk device)';
-        } else if (pitchDeg < -14 || gazeDirection === 'away_up') {
+        } else if (pitchDeg < -9 || lookUpScore > 0.40 || (pitchDeg < -6 && lookUpScore > 0.22)) {
           distractionState = 'head_up_drift';
           distractionSubreason = 'Head tilted upward / ceiling drift';
         } else if (Math.abs(yawDeg) > this.weights.headYawThresholdDeg) {
           distractionState = 'head_turned';
           distractionSubreason = yawDeg > 0 ? 'Head turned right' : 'Head turned left';
-        } else if (gazeDirection !== 'forward') {
+        } else if (lookLeftScore > 0.40 || lookRightScore > 0.40 || gazeDirection !== 'forward') {
           distractionState = 'gaze_away';
           distractionSubreason = `Gaze directed ${gazeDirection.replace('away_', '')}`;
         } else {
           distractionState = 'focused';
         }
 
-        // Render Academic Bounding Box and Overlay
-        this.renderOverlay(ctx, boundingBox, distractionState, this.currentFps, width, height, landmarks);
+        // Render Academic Bounding Box, Additional Faces, and Overlay
+        this.renderOverlay(
+          ctx,
+          boundingBox,
+          distractionState,
+          this.currentFps,
+          width,
+          height,
+          landmarks,
+          additionalFaces
+        );
       } else {
         facePresent = false;
         distractionState = 'face_absent';
+        distractionSubreason = 'Subject not present in camera frame';
         gazeForwardScore = 0;
         headAlignment = 0;
         eyeOpenness = 0;
@@ -565,9 +657,11 @@ export class AttentionCVEngine {
       blink_count: this.blinkCount,
       attention_score: attentionScore,
       distraction_state: distractionState,
+      distraction_subreason: distractionSubreason,
       fps: this.currentFps,
       system_load_pct: Math.round(18 + Math.random() * 6),
       bounding_box: boundingBox,
+      additional_faces: additionalFaces.length > 0 ? additionalFaces : undefined,
     };
   }
 
@@ -956,7 +1050,30 @@ export class AttentionCVEngine {
       base.motion_intensity = 25;
       base.motion_variance = 7.0;
       base.distraction_state = 'multi_face_warning';
+      base.distraction_subreason = '2 subjects detected in frame (Single-student privacy policy)';
       base.attention_score = 50;
+      base.additional_faces = [
+        {
+          x: Math.round(width * 0.62),
+          y: Math.round(height * 0.22),
+          width: Math.round(width * 0.28),
+          height: Math.round(height * 0.46),
+          confidence: 0.96,
+          label: 'SECONDARY SUBJECT (FACE #2)',
+        },
+      ];
+      if (base.bounding_box) {
+        this.renderOverlay(
+          ctx,
+          base.bounding_box,
+          'multi_face_warning',
+          base.fps,
+          width,
+          height,
+          undefined,
+          base.additional_faces
+        );
+      }
       return base;
     }
 
@@ -1025,7 +1142,7 @@ export class AttentionCVEngine {
         const labelMap: Record<string, string> = {
           gaze_away: 'Gaze away',
           head_turned: 'Head turned away',
-          head_down_phone: 'Looking down (Phone/Device)',
+          head_down_phone: 'Looking down (Phone/Desk)',
           head_up_drift: 'Looking up / Ceiling drift',
           face_absent: 'Face absent',
           eyes_closed: 'Prolonged eye closure',
@@ -1098,7 +1215,8 @@ export class AttentionCVEngine {
     fps: number,
     width: number,
     height: number,
-    landmarks?: any[]
+    landmarks?: any[],
+    additionalFaces?: CVTelemetryFrame['additional_faces']
   ) {
     if (!box) return;
 
@@ -1106,9 +1224,9 @@ export class AttentionCVEngine {
     const strokeColor = isDistracted ? '#DC2626' : '#2563EB'; // Red if distracted, Blue if focused
     const labelBgColor = isDistracted ? '#DC2626' : '#2563EB';
     
-    let tagText = `ID:402 | CONF:${Math.round((box.confidence || 0.98) * 100)}%`;
+    let tagText = `ID:PRIMARY | CONF:${Math.round((box.confidence || 0.98) * 100)}%`;
     if (distractionState === 'multi_face_warning') {
-      tagText = 'WARNING | MULTIPLE FACES';
+      tagText = 'WARNING | MULTIPLE FACES DETECTED';
     } else if (distractionState === 'head_turned') {
       tagText = 'DISTRACTED | HEAD TURNED';
     } else if (distractionState === 'head_down_phone') {
@@ -1125,7 +1243,7 @@ export class AttentionCVEngine {
       tagText = 'DISTRACTED | HEAD DANCING / GAZE DARTING';
     }
 
-    // 1. Draw Corner HUD Box
+    // 1. Draw Corner HUD Box for Primary Face
     ctx.save();
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = 2;
@@ -1162,7 +1280,7 @@ export class AttentionCVEngine {
     ctx.lineTo(box.x + box.width, box.y + box.height - cornerLen);
     ctx.stroke();
 
-    // 2. Draw Label Tag on Top of Box
+    // 2. Draw Label Tag on Top of Primary Box
     ctx.fillStyle = labelBgColor;
     ctx.font = '600 11px Inter, system-ui, sans-serif';
     const textMetrics = ctx.measureText(tagText);
@@ -1186,6 +1304,28 @@ export class AttentionCVEngine {
           ctx.arc(px, py, 2.5, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
+    }
+
+    // 4. Render Additional / Secondary Faces
+    if (additionalFaces && additionalFaces.length > 0) {
+      for (const af of additionalFaces) {
+        ctx.strokeStyle = '#EF4444';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(af.x, af.y, af.width, af.height);
+        ctx.setLineDash([]);
+
+        // Red label tag
+        ctx.fillStyle = '#DC2626';
+        const label = af.label || 'WARNING | SECONDARY FACE';
+        const afMetrics = ctx.measureText(label);
+        const afBadgeW = afMetrics.width + 14;
+        const afBadgeH = 20;
+
+        ctx.fillRect(af.x, Math.max(0, af.y - afBadgeH), afBadgeW, afBadgeH);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(label, af.x + 6, Math.max(14, af.y - 5));
       }
     }
 
