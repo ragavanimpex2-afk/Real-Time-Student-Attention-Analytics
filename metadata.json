@@ -1,0 +1,6 @@
+{
+  "name": "Student Attention Analytics",
+  "description": "Privacy-first real-time student attention and engagement proxy analytics powered by edge computer vision and MediaPipe.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
