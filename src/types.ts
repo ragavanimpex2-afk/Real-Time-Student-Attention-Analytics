@@ -39,6 +39,8 @@ export interface CVTelemetryFrame {
   head_pitch_deg: number;
   head_yaw_deg: number;
   head_roll_deg: number;
+  motion_intensity: number; // 0 to 100 (Restlessness proxy normalized from kinematic variance)
+  motion_variance: number; // Raw kinematic variance score (deg^2)
   blink_detected: boolean;
   blink_count: number;
   attention_score: number; // 0 to 100 Engagement/Attention Proxy

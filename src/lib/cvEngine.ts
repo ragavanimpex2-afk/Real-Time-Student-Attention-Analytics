@@ -241,6 +241,8 @@ export class AttentionCVEngine {
     let blinkDetected = false;
     let distractionState: DistractionState = 'focused';
     let boundingBox: CVTelemetryFrame['bounding_box'] = undefined;
+    let compositeKinematicVariance = 0;
+    let motionIntensity = 10;
 
     try {
       const results = this.faceLandmarker.detectForVideo(this.videoElement, now);
@@ -431,6 +433,7 @@ export class AttentionCVEngine {
 
           // Composite Kinematic Energy Formula
           compositeKinematicVariance = varYaw * 0.85 + varPitch * 1.1 + varRoll * 0.95 + varPos * 0.7;
+          motionIntensity = Math.min(100, Math.round((compositeKinematicVariance / 32) * 100));
 
           // Detect active head dancing / rhythmic motion distraction
           if (compositeKinematicVariance > 30 || (directionalReversals >= 3 && compositeKinematicVariance > 14)) {
@@ -525,6 +528,8 @@ export class AttentionCVEngine {
       head_pitch_deg: Number(pitchDeg.toFixed(1)),
       head_yaw_deg: Number(yawDeg.toFixed(1)),
       head_roll_deg: Number(rollDeg.toFixed(1)),
+      motion_intensity: motionIntensity,
+      motion_variance: Number(compositeKinematicVariance.toFixed(1)),
       blink_detected: blinkDetected,
       blink_count: this.blinkCount,
       attention_score: attentionScore,
@@ -696,6 +701,8 @@ export class AttentionCVEngine {
         head_pitch_deg: Number(pitchDeg.toFixed(1)),
         head_yaw_deg: Number(yawDeg.toFixed(1)),
         head_roll_deg: Number(rollDeg.toFixed(1)),
+        motion_intensity: 14,
+        motion_variance: 4.2,
         blink_detected: blinkDetected,
         blink_count: this.blinkCount,
         attention_score: attentionScore,
@@ -720,6 +727,8 @@ export class AttentionCVEngine {
       head_pitch_deg: 0,
       head_yaw_deg: 0,
       head_roll_deg: 0,
+      motion_intensity: 0,
+      motion_variance: 0,
       blink_detected: false,
       blink_count: this.blinkCount,
       attention_score: attentionScore,
@@ -744,6 +753,8 @@ export class AttentionCVEngine {
       base.head_alignment = 0.94;
       base.head_yaw_deg = 2.4;
       base.head_pitch_deg = 1.2;
+      base.motion_intensity = 12;
+      base.motion_variance = 3.6;
       base.distraction_state = 'focused';
       base.attention_score = Math.round(
         this.weights.facePresenceWeight * 100 +
@@ -761,6 +772,8 @@ export class AttentionCVEngine {
       base.face_count = 0;
       base.gaze_forward_score = 0;
       base.head_alignment = 0;
+      base.motion_intensity = 0;
+      base.motion_variance = 0;
       base.distraction_state = 'face_absent';
       base.attention_score = 0;
       base.bounding_box = undefined;
@@ -774,6 +787,8 @@ export class AttentionCVEngine {
       base.gaze_direction = 'away_right';
       base.head_yaw_deg = 32.5;
       base.head_pitch_deg = 4.0;
+      base.motion_intensity = 48;
+      base.motion_variance = 15.2;
       base.gaze_forward_score = 0.25;
       base.head_alignment = 0.28;
       base.distraction_state = 'head_turned';
@@ -794,6 +809,8 @@ export class AttentionCVEngine {
       base.gaze_direction = 'away_down';
       base.head_yaw_deg = 6.0;
       base.head_pitch_deg = 26.0;
+      base.motion_intensity = 38;
+      base.motion_variance = 11.4;
       base.gaze_forward_score = 0.35;
       base.head_alignment = 0.42;
       base.distraction_state = 'gaze_away';
@@ -814,6 +831,8 @@ export class AttentionCVEngine {
       base.eye_openness = 0.04;
       base.eye_openness_left = 0.04;
       base.eye_openness_right = 0.04;
+      base.motion_intensity = 8;
+      base.motion_variance = 1.9;
       base.gaze_forward_score = 0.2;
       base.head_alignment = 0.85;
       base.distraction_state = 'eyes_closed';
@@ -830,6 +849,8 @@ export class AttentionCVEngine {
       base.gaze_direction = 'away_down';
       base.head_yaw_deg = 2.0;
       base.head_pitch_deg = 34.0;
+      base.motion_intensity = 32;
+      base.motion_variance = 9.5;
       base.gaze_forward_score = 0.22;
       base.head_alignment = 0.25;
       base.distraction_state = 'head_down_phone';
@@ -847,6 +868,8 @@ export class AttentionCVEngine {
       base.gaze_direction = 'away_up';
       base.head_yaw_deg = 3.0;
       base.head_pitch_deg = -32.0;
+      base.motion_intensity = 35;
+      base.motion_variance = 10.8;
       base.gaze_forward_score = 0.25;
       base.head_alignment = 0.30;
       base.distraction_state = 'head_up_drift';
@@ -864,6 +887,8 @@ export class AttentionCVEngine {
       base.eye_openness = 0.12;
       base.eye_openness_left = 0.12;
       base.eye_openness_right = 0.12;
+      base.motion_intensity = 6;
+      base.motion_variance = 1.2;
       base.gaze_forward_score = 0.4;
       base.head_alignment = 0.6;
       base.distraction_state = 'drowsy_microsleep';
@@ -881,6 +906,8 @@ export class AttentionCVEngine {
       base.gaze_direction = 'away_left';
       base.head_yaw_deg = 14.0;
       base.head_pitch_deg = 8.0;
+      base.motion_intensity = 88;
+      base.motion_variance = 36.4;
       base.gaze_forward_score = 0.50;
       base.head_alignment = 0.60;
       base.distraction_state = 'rapid_gaze_darting';
@@ -895,6 +922,8 @@ export class AttentionCVEngine {
     if (override === 'multi_face_warning') {
       base.face_present = true;
       base.face_count = 2;
+      base.motion_intensity = 25;
+      base.motion_variance = 7.0;
       base.distraction_state = 'multi_face_warning';
       base.attention_score = 50;
       return base;

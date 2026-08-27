@@ -33,6 +33,7 @@ import {
   DistractionState,
 } from '../types';
 import { AttentionCVEngine, DEFAULT_WEIGHTS } from '../lib/cvEngine';
+import { MotionSparkline } from '../components/MotionSparkline';
 
 interface LiveSessionPageProps {
   weights: AttentionWeightsConfig;
@@ -81,6 +82,13 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
   const [timelineHistory, setTimelineHistory] = useState<
     Array<{ time: string; score: number; offsetSec: number }>
   >([]);
+  const [motionHistory, setMotionHistory] = useState<
+    Array<{ intensity: number; variance: number }>
+  >([
+    { intensity: 10, variance: 2.8 },
+    { intensity: 12, variance: 3.1 },
+    { intensity: 14, variance: 3.4 },
+  ]);
   const [liveEvents, setLiveEvents] = useState<DetectedEvent[]>([]);
   const [activeDistraction, setActiveDistraction] = useState<DetectedEvent | null>(null);
 
@@ -159,6 +167,14 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
       {
         onTelemetry: (frame) => {
           setLatestFrame(frame);
+
+          // Update motion sparkline telemetry buffer
+          setMotionHistory((prev) => {
+            const intensity = frame.motion_intensity ?? 10;
+            const variance = frame.motion_variance ?? 3.0;
+            const updated = [...prev, { intensity, variance }];
+            return updated.slice(-28);
+          });
 
           // Update frame accumulation stats
           const stats = statsRef.current;
@@ -495,7 +511,7 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
           </div>
 
           {/* Quick Metrics Bar Under Video */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <div className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-2xs">
               <div className="text-[10px] font-bold text-[#64748B] uppercase">Face Presence</div>
               <div className="text-base font-bold text-[#0F172A] mt-0.5 flex items-center gap-1.5">
@@ -526,6 +542,32 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
               <div className="text-[10px] font-bold text-[#64748B] uppercase">Blinks Logged</div>
               <div className="text-base font-bold text-[#0F172A] mt-0.5">
                 {latestFrame.blink_count}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-2xs flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-bold text-[#64748B] uppercase">Motion Intensity</div>
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    (latestFrame.motion_intensity ?? 10) > 70
+                      ? 'bg-red-500 animate-pulse'
+                      : (latestFrame.motion_intensity ?? 10) > 40
+                      ? 'bg-amber-500'
+                      : 'bg-emerald-500'
+                  }`}
+                ></span>
+              </div>
+              <div className="flex items-baseline justify-between mt-0.5">
+                <div className="text-base font-bold text-[#0F172A]">
+                  {latestFrame.motion_intensity ?? 10}%
+                </div>
+                <span className="text-[10px] font-mono text-[#64748B]">
+                  {latestFrame.motion_variance ?? 3.2}°²
+                </span>
+              </div>
+              <div className="mt-1">
+                <MotionSparkline data={motionHistory} height={18} showPeak={false} />
               </div>
             </div>
           </div>
@@ -668,6 +710,76 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
               <span>Face: {(weights.facePresenceWeight * 100).toFixed(0)}%</span>
               <span>Gaze: {(weights.forwardGazeWeight * 100).toFixed(0)}%</span>
               <span>Head: {(weights.headAlignmentWeight * 100).toFixed(0)}%</span>
+            </div>
+          </div>
+
+          {/* Card: Motion Intensity & Restlessness Sparkline Metric */}
+          <div
+            id="live-motion-intensity-card"
+            className="bg-white rounded-2xl border border-[#E2E8F0] p-5 shadow-2xs space-y-3"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-[#64748B] uppercase">
+                <Activity className="w-3.5 h-3.5 text-blue-600" />
+                <span>MOTION INTENSITY & RESTLESSNESS</span>
+              </div>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                  (latestFrame.motion_intensity ?? 10) > 70
+                    ? 'bg-red-50 text-red-700 border border-red-200'
+                    : (latestFrame.motion_intensity ?? 10) > 40
+                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                }`}
+              >
+                {(latestFrame.motion_intensity ?? 10) > 70
+                  ? 'HIGH RESTLESSNESS'
+                  : (latestFrame.motion_intensity ?? 10) > 40
+                  ? 'ELEVATED MOVEMENT'
+                  : (latestFrame.motion_intensity ?? 10) > 20
+                  ? 'NATURAL SHIFTS'
+                  : 'CALM & STEADY'}
+              </span>
+            </div>
+
+            <div className="flex items-baseline justify-between">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-3xl font-bold text-[#0F172A] tracking-tight">
+                  {latestFrame.motion_intensity ?? 10}%
+                </span>
+                <span className="text-xs font-semibold text-[#64748B]">Restlessness Index</span>
+              </div>
+              <div className="text-right">
+                <div className="text-xs font-mono text-[#0F172A] font-bold">
+                  {latestFrame.motion_variance ?? 3.2}°²
+                </div>
+                <div className="text-[10px] text-[#94A3B8]">Kinematic Variance</div>
+              </div>
+            </div>
+
+            {/* Real-time Sparkline Visualization */}
+            <div className="pt-1">
+              <MotionSparkline data={motionHistory} height={38} showPeak={true} />
+            </div>
+
+            {/* Teacher Restlessness Proxy Guide */}
+            <div className="pt-2 border-t border-[#F1F5F9] flex items-center justify-between text-[10px] text-[#64748B]">
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                &lt;20% Calm
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                20-40% Normal
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                40-70% Restless
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                &gt;70% High
+              </span>
             </div>
           </div>
 
