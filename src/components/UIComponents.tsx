@@ -17,6 +17,7 @@ import {
   TrendingUp,
   TrendingDown,
   AlertTriangle,
+  AlertCircle,
   CheckCircle,
   HelpCircle,
   X,
@@ -582,6 +583,8 @@ export interface DistractionDisputeModalProps {
     durationSec: number;
     time?: string;
   } | null;
+  remainingDisputes?: number;
+  isContinuousSevereInfraction?: boolean;
   onClose: () => void;
   onSubmitDispute: (reason: 'posture_adjustment' | 'thinking_gesture' | 'speaking_proctor' | 'environmental_glance' | 'false_alarm_sensor' | 'other', note?: string) => void;
 }
@@ -589,6 +592,8 @@ export interface DistractionDisputeModalProps {
 export const DistractionDisputeModal: React.FC<DistractionDisputeModalProps> = ({
   isOpen,
   event,
+  remainingDisputes = 5,
+  isContinuousSevereInfraction = false,
   onClose,
   onSubmitDispute,
 }) => {
@@ -598,6 +603,9 @@ export const DistractionDisputeModal: React.FC<DistractionDisputeModalProps> = (
   const [note, setNote] = React.useState<string>('');
 
   if (!isOpen || !event) return null;
+
+  const isQuotaExhausted = remainingDisputes <= 0;
+  const isBlocked = isQuotaExhausted || isContinuousSevereInfraction;
 
   const REASONS = [
     {
@@ -641,9 +649,20 @@ export const DistractionDisputeModal: React.FC<DistractionDisputeModalProps> = (
               <AlertTriangle className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-[#0F172A]">Dispute Distraction Flag</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-[#0F172A]">Dispute Distraction Flag</h2>
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    remainingDisputes > 0
+                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                      : 'bg-red-50 text-red-700 border-red-200'
+                  }`}
+                >
+                  {remainingDisputes > 0 ? `${remainingDisputes} of 5 Disputes Left` : '0 / 5 Disputes Left'}
+                </span>
+              </div>
               <p className="text-xs text-[#64748B]">
-                Auto-tunes detection sensitivity to prevent recurrent false alerts
+                Max 5 disputes allowed per session. Adapts detection sensitivity.
               </p>
             </div>
           </div>
@@ -654,6 +673,26 @@ export const DistractionDisputeModal: React.FC<DistractionDisputeModalProps> = (
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Warning If Quota Exhausted */}
+        {isQuotaExhausted && (
+          <div className="p-3 bg-red-50 rounded-xl border border-red-200 text-red-900 text-xs flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <strong>Dispute Quota Exhausted:</strong> You have reached the maximum allowed limit of 5 disputes for this session. This flag will be preserved in the audit log for proctor evaluation.
+            </div>
+          </div>
+        )}
+
+        {/* Warning If Continuous Severe Infraction Ongoing */}
+        {isContinuousSevereInfraction && !isQuotaExhausted && (
+          <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-xs flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <strong>Dispute Blocked During Active Violation:</strong> Continuous severe off-task activity detected (prolonged sleeping or continuous phone usage). Please refocus on the screen before filing a dispute.
+            </div>
+          </div>
+        )}
 
         {/* Flagged Event Details Summary */}
         <div className="p-3 bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] flex items-center justify-between text-xs">
@@ -675,16 +714,19 @@ export const DistractionDisputeModal: React.FC<DistractionDisputeModalProps> = (
             {REASONS.map((r) => (
               <label
                 key={r.id}
-                onClick={() => setSelectedReason(r.id)}
-                className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                  selectedReason === r.id
-                    ? 'bg-blue-50/70 border-blue-400 text-blue-950 shadow-2xs'
-                    : 'bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#334155]'
+                onClick={() => !isBlocked && setSelectedReason(r.id)}
+                className={`p-3 rounded-xl border flex items-start gap-3 transition-all ${
+                  isBlocked
+                    ? 'opacity-50 cursor-not-allowed bg-[#F8FAFC] border-[#E2E8F0]'
+                    : selectedReason === r.id
+                    ? 'bg-blue-50/70 border-blue-400 text-blue-950 shadow-2xs cursor-pointer'
+                    : 'bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#334155] cursor-pointer'
                 }`}
               >
                 <input
                   type="radio"
                   name="dispute_reason"
+                  disabled={isBlocked}
                   checked={selectedReason === r.id}
                   onChange={() => setSelectedReason(r.id)}
                   className="mt-0.5 accent-blue-600"
@@ -706,10 +748,13 @@ export const DistractionDisputeModal: React.FC<DistractionDisputeModalProps> = (
           </label>
           <textarea
             rows={2}
+            disabled={isBlocked}
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="e.g., solving quadratic equation on physical paper pad..."
-            className="w-full text-xs p-2.5 rounded-lg border border-[#E2E8F0] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className={`w-full text-xs p-2.5 rounded-lg border border-[#E2E8F0] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+              isBlocked ? 'opacity-50 bg-[#F1F5F9] cursor-not-allowed' : ''
+            }`}
           />
         </div>
 
@@ -717,7 +762,7 @@ export const DistractionDisputeModal: React.FC<DistractionDisputeModalProps> = (
         <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-900 text-xs flex items-start gap-2">
           <Sparkles className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
           <div className="leading-snug">
-            <strong>Adaptive Calibration:</strong> Submitting this dispute immediately adapts the CV engine tolerance by +15%, increasing temporal hysteresis and zero-deviation angles.
+            <strong>Adaptive Calibration:</strong> Submitting this dispute immediately adapts the CV engine tolerance by +15%, increasing temporal hysteresis and zero-deviation angles. (Max 5 allowed per session).
           </div>
         </div>
 
@@ -731,14 +776,20 @@ export const DistractionDisputeModal: React.FC<DistractionDisputeModalProps> = (
           </button>
           <button
             type="button"
+            disabled={isBlocked}
             onClick={() => {
+              if (isBlocked) return;
               onSubmitDispute(selectedReason, note);
               onClose();
             }}
-            className="px-5 py-2 text-xs font-semibold bg-[#2563EB] hover:bg-blue-700 text-white rounded-lg transition-colors shadow-sm cursor-pointer flex items-center gap-1.5"
+            className={`px-5 py-2 text-xs font-semibold rounded-lg transition-colors shadow-sm flex items-center gap-1.5 ${
+              isBlocked
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : 'bg-[#2563EB] hover:bg-blue-700 text-white cursor-pointer'
+            }`}
           >
             <CheckCircle className="w-3.5 h-3.5" />
-            <span>Confirm & Auto-Tune</span>
+            <span>Confirm & Auto-Tune ({remainingDisputes}/5 Left)</span>
           </button>
         </div>
       </div>

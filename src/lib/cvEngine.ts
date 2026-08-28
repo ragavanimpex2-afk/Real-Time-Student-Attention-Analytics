@@ -576,13 +576,16 @@ export class AttentionCVEngine {
           }
         }
 
-        // --- Mouth, Lip Aperture & Speaking/Discussion / Smile Tracking ---
+        // --- High-Precision Mouth, Lip Aperture & Speaking/Discussion / Smile Tracking ---
         const jawOpenScore = blendshapes['jawOpen'] || 0;
         const mouthSmileLeft = blendshapes['mouthSmileLeft'] || 0;
         const mouthSmileRight = blendshapes['mouthSmileRight'] || 0;
+        const cheekSquintLeft = blendshapes['cheekSquintLeft'] || 0;
+        const cheekSquintRight = blendshapes['cheekSquintRight'] || 0;
+        const cheekSquintAvg = (cheekSquintLeft + cheekSquintRight) / 2;
         this.smileScore = Math.max(0, Math.min(1, (mouthSmileLeft + mouthSmileRight) / 2));
 
-        // Lip Aperture (Upper Lip 13, Lower Lip 14, Left Corner 61, Right Corner 291)
+        // Lip Aperture (Upper Lip 13, Lower Lip 14, Left Corner 61, Right Corner 291, Inner Lip 12, 15)
         let lipAperture = 0;
         if (landmarks[13] && landmarks[14] && landmarks[61] && landmarks[291]) {
           const lipVertical = Math.hypot(landmarks[13].x - landmarks[14].x, landmarks[13].y - landmarks[14].y);
@@ -591,20 +594,43 @@ export class AttentionCVEngine {
         }
 
         this.recentMouthApertures.push({ aperture: lipAperture, jaw: jawOpenScore, time: now });
-        this.recentMouthApertures = this.recentMouthApertures.filter((m) => now - m.time <= 1800);
+        this.recentMouthApertures = this.recentMouthApertures.filter((m) => now - m.time <= 1600);
 
         this.speakingScore = 0;
-        if (this.recentMouthApertures.length >= 8) {
+        let isSyllabicOscillating = false;
+        if (this.recentMouthApertures.length >= 6) {
           const Nm = this.recentMouthApertures.length;
           const meanAperture = this.recentMouthApertures.reduce((acc, m) => acc + m.aperture, 0) / Nm;
           const varAperture = this.recentMouthApertures.reduce((acc, m) => acc + (m.aperture - meanAperture) ** 2, 0) / Nm;
           const maxJaw = Math.max(...this.recentMouthApertures.map((m) => m.jaw));
+          const minJaw = Math.min(...this.recentMouthApertures.map((m) => m.jaw));
+          const jawDelta = maxJaw - minJaw;
 
-          // Lip aperture oscillation + jaw activity indicates speech / discussion
-          if (varAperture > 0.0018 || (maxJaw > 0.16 && varAperture > 0.0008)) {
-            this.speakingScore = Math.min(1.0, varAperture * 180 + maxJaw * 0.75);
+          // Syllabic Phoneme Oscillations: count zero-crossings of lip movement derivative
+          let apertureOscillations = 0;
+          for (let i = 2; i < Nm; i++) {
+            const d1 = this.recentMouthApertures[i - 1].aperture - this.recentMouthApertures[i - 2].aperture;
+            const d2 = this.recentMouthApertures[i].aperture - this.recentMouthApertures[i - 1].aperture;
+            if (d1 * d2 < -0.00004) {
+              apertureOscillations++;
+            }
+          }
+
+          isSyllabicOscillating = apertureOscillations >= 2;
+
+          // Lip aperture oscillation + dynamic jaw activity distinguishes genuine speaking from stationary open mouth
+          if ((varAperture > 0.0009 && isSyllabicOscillating) || (jawDelta > 0.12 && varAperture > 0.0006) || (maxJaw > 0.22 && isSyllabicOscillating)) {
+            this.speakingScore = Math.min(
+              1.0,
+              varAperture * 220 + jawDelta * 1.4 + (isSyllabicOscillating ? 0.35 : 0) + maxJaw * 0.4
+            );
           }
         }
+
+        // Laughter detection: High smile combined with mouth aperture dynamics or cheek squints
+        const isLaughing =
+          (this.smileScore > 0.48 && (cheekSquintAvg > 0.24 || jawOpenScore > 0.14 || isSyllabicOscillating)) ||
+          this.smileScore > 0.70;
 
         // --- Debounced Gaze Direction Tracking (Fixes Rapid Gaze Darting False Alarms) ---
         // Only record direction shift if sustained for >=220ms to filter out frame jitter & short head shakes
@@ -706,25 +732,29 @@ export class AttentionCVEngine {
           instantSubreason = `${faceCount} subjects detected in frame (Single-student privacy policy)`;
         } else if (
           !this.isEyeOccluded &&
-          (this.isEyeClosed || (blinkLeftScore > 0.85 && blinkRightScore > 0.85)) &&
-          now - this.eyeClosedStartMs > 1400
+          (this.isEyeClosed || (blinkLeftScore > 0.75 && blinkRightScore > 0.75) || (earLeft < 0.18 && earRight < 0.18)) &&
+          now - this.eyeClosedStartMs > 1200
         ) {
           instantState = 'eyes_closed';
-          instantSubreason = 'Continuous bilateral eye closure detected (>1.4s)';
-        } else if (!this.isEyeOccluded && avgRecentOpenness < 0.30 && this.recentEyeOpennessValues.length > 15) {
+          const closureSec = ((now - this.eyeClosedStartMs) / 1000).toFixed(1);
+          instantSubreason =
+            now - this.eyeClosedStartMs > 4500
+              ? `Deep continuous sleeping detected (${closureSec}s)`
+              : `Continuous bilateral eye closure / sleeping (${closureSec}s)`;
+        } else if (!this.isEyeOccluded && avgRecentOpenness < 0.28 && this.recentEyeOpennessValues.length > 12) {
           instantState = 'drowsy_microsleep';
-          instantSubreason = 'Drowsy pattern / low eyelid aperture';
-        } else if (this.speakingScore > 0.65 && (Math.abs(yawDeg) > 16 || lookLeftScore > 0.45 || lookRightScore > 0.45)) {
+          instantSubreason = 'Drowsy pattern / microsleep eyelid droop';
+        } else if (isLaughing) {
+          instantState = 'laughing_smiling';
+          instantSubreason = 'Laughing / Social reaction detected';
+        } else if (this.speakingScore > 0.58 && (Math.abs(yawDeg) > 15 || lookLeftScore > 0.42 || lookRightScore > 0.42)) {
           // Speaking while looking away or turning to peer -> Peer Discussion / Malpractice
           instantState = 'speaking_discussion';
           instantSubreason = 'Speaking / Peer discussion detected (Suspected proctoring breach)';
-        } else if (this.speakingScore > 0.72) {
+        } else if (this.speakingScore > 0.62) {
           // Speaking while facing forward
           instantState = 'speaking_discussion';
           instantSubreason = 'Speaking / Vocalizing detected';
-        } else if (this.smileScore > 0.58 && this.speakingScore > 0.35) {
-          instantState = 'laughing_smiling';
-          instantSubreason = 'Laughing / Social reaction detected';
         } else if (isHeadDancing || hasMultiQuadrantDarting) {
           instantState = 'rapid_gaze_darting';
           instantSubreason = 'Rapid saccadic gaze darting across multiple screen quadrants';

@@ -395,6 +395,13 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
     }
   };
 
+  const MAX_DISPUTES = 5;
+  const remainingDisputes = Math.max(0, MAX_DISPUTES - feedbackLog.length);
+  const isContinuousSevereViolation =
+    (latestFrame.distraction_state === 'eyes_closed' && (activeDistraction?.durationSec || 0) >= 4) ||
+    (latestFrame.distraction_state === 'head_down_phone' && (activeDistraction?.durationSec || 0) >= 8) ||
+    (latestFrame.distraction_state === 'head_turned' && (activeDistraction?.durationSec || 0) >= 8);
+
   const handleOpenDispute = (event: DetectedEvent) => {
     setDisputingEvent(event);
   };
@@ -646,6 +653,23 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
 
         {/* Mode Selector & Action Controls */}
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Prominent Real-time LIVE Session Clock Badge */}
+          <div
+            id="session-live-clock-badge"
+            className="px-3.5 py-1.5 bg-[#0F172A] text-white rounded-xl flex items-center gap-2.5 border border-slate-700 shadow-xs"
+          >
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-600"></span>
+            </span>
+            <span className="font-mono text-sm font-bold tracking-wider">
+              {isCalibrating ? 'CALIBRATING...' : formatTime(elapsedSec)}
+            </span>
+            <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest bg-red-950/80 px-1.5 py-0.5 rounded border border-red-800/60">
+              LIVE
+            </span>
+          </div>
+
           {/* Mode Switcher Pills */}
           <div className="flex items-center bg-[#F1F5F9] p-1 rounded-xl border border-[#E2E8F0]">
             <button
@@ -931,10 +955,29 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                   <button
                     type="button"
                     onClick={() => handleOpenDispute(activeDistraction)}
-                    className="px-2 py-1 bg-black/80 hover:bg-black/95 text-amber-300 text-[11px] font-semibold rounded-lg border border-amber-400/40 backdrop-blur-xs transition-colors cursor-pointer flex items-center gap-1"
-                    title="Report false positive & auto-tune sensitivity"
+                    disabled={remainingDisputes <= 0 || isContinuousSevereViolation}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border backdrop-blur-xs transition-colors flex items-center gap-1 ${
+                      remainingDisputes <= 0
+                        ? 'bg-black/60 text-gray-400 border-gray-600 cursor-not-allowed'
+                        : isContinuousSevereViolation
+                        ? 'bg-amber-950/80 text-amber-300 border-amber-500/50 cursor-not-allowed'
+                        : 'bg-black/80 hover:bg-black/95 text-amber-300 border-amber-400/40 cursor-pointer'
+                    }`}
+                    title={
+                      remainingDisputes <= 0
+                        ? 'Dispute limit reached (5/5 used)'
+                        : isContinuousSevereViolation
+                        ? 'Dispute locked: Continuous severe violation active'
+                        : `Dispute false positive (${remainingDisputes}/5 left)`
+                    }
                   >
-                    <span>Dispute</span>
+                    <span>
+                      {remainingDisputes <= 0
+                        ? 'Disputes (0/5)'
+                        : isContinuousSevereViolation
+                        ? 'Locked'
+                        : `Dispute (${remainingDisputes}/5)`}
+                    </span>
                   </button>
                 )}
               </div>
@@ -1430,8 +1473,19 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
           {/* Card 3: Live Distraction Events Log */}
           <div className="bg-white rounded-2xl border border-[#E2E8F0] p-5 shadow-2xs flex-1 flex flex-col justify-between">
             <div className="flex items-center justify-between mb-3">
-              <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">
-                DISTRACTION EVENTS ({liveEvents.length})
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">
+                  DISTRACTION EVENTS ({liveEvents.length})
+                </span>
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    remainingDisputes > 0
+                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                      : 'bg-red-50 text-red-700 border-red-200'
+                  }`}
+                >
+                  {remainingDisputes}/5 Disputes Left
+                </span>
               </div>
               {activeDistraction && (
                 <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200 animate-pulse">
@@ -1477,11 +1531,20 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                       {!evt.is_disputed && (
                         <button
                           type="button"
+                          disabled={remainingDisputes <= 0}
                           onClick={() => handleOpenDispute(evt)}
-                          className="px-2 py-0.5 rounded text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer"
-                          title="Dispute false positive and auto-tune threshold"
+                          className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                            remainingDisputes <= 0
+                              ? 'text-gray-400 bg-gray-100 border border-gray-200 cursor-not-allowed'
+                              : 'text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 cursor-pointer'
+                          }`}
+                          title={
+                            remainingDisputes <= 0
+                              ? 'Dispute quota limit reached (5/5 used)'
+                              : 'Dispute false positive and auto-tune threshold'
+                          }
                         >
-                          Dispute
+                          {remainingDisputes <= 0 ? 'Quota Reached' : 'Dispute'}
                         </button>
                       )}
                     </div>
@@ -1501,6 +1564,8 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
       <DistractionDisputeModal
         isOpen={!!disputingEvent}
         event={disputingEvent}
+        remainingDisputes={remainingDisputes}
+        isContinuousSevereInfraction={isContinuousSevereViolation}
         onClose={() => setDisputingEvent(null)}
         onSubmitDispute={handleSubmitDispute}
       />
