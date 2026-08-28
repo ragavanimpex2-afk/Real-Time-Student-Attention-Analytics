@@ -610,9 +610,9 @@ app.post('/api/ai/insight', async (req, res) => {
 
   const durationMin = Math.round(session_duration / 60);
 
-  // 1. Attempt Groq API (Iterate across standard free tier models: llama-3.1-8b-instant, llama-3.3-70b-specdec, llama3-8b-8192, gemma2-9b-it)
+  // 1. Attempt Groq API (Active production models: llama-3.3-70b-versatile, llama-3.1-8b-instant)
   if (process.env.GROQ_API_KEY) {
-    const groqCandidateModels = ['llama-3.1-8b-instant', 'llama3-8b-8192', 'llama-3.3-70b-specdec', 'gemma2-9b-it'];
+    const groqCandidateModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const prompt = `You are an academic research assistant for student engagement proxies in educational sessions.
 Analyze these anonymized, aggregated numerical metrics from a ${durationMin}-minute session:
@@ -634,7 +634,8 @@ Provide your response in valid JSON with these exact keys:
   "notable_periods": "Description of focus peaks and lull intervals",
   "distraction_analysis": "Context on the ${gaze_away_events} gaze deviations and ${long_distraction_events} prolonged events",
   "recommendations": ["Actionable pedagogical suggestion 1", "Actionable pedagogical suggestion 2", "Actionable pedagogical suggestion 3"]
-}`;
+}
+`;
 
     for (const modelName of groqCandidateModels) {
       if (insightResult.summary) break;
@@ -677,17 +678,14 @@ Provide your response in valid JSON with these exact keys:
           break;
         }
       } catch (err: any) {
-        // Silently try next model candidate if model not found
-        if (!err?.message?.includes('model_not_found') && !err?.message?.includes('does not exist')) {
-          console.warn(`Groq (${modelName}) failed:`, err?.message);
-        }
+        // Silently skip if model is unavailable or rate limited
       }
     }
   }
 
-  // 2. Attempt Google GenAI API with resilient multi-model failover (gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-flash)
+  // 2. Attempt Google GenAI API with active Gemini 3 series models (gemini-3.7-flash, gemini-3.1-flash-lite, gemini-flash-latest)
   if (!insightResult.summary && process.env.GEMINI_API_KEY) {
-    const geminiCandidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.7-flash'];
+    const geminiCandidateModels = ['gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
     const ai = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
       httpOptions: {
@@ -750,7 +748,7 @@ Provide your response in JSON format with these exact keys:
           break;
         }
       } catch (err: any) {
-        console.warn(`Gemini (${modelName}) fell back:`, err?.message);
+        // Fall back to next model candidate smoothly
       }
     }
   }
