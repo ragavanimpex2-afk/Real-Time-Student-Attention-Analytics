@@ -568,3 +568,180 @@ export const SettingsModal: React.FC<{
     </div>
   );
 };
+
+/**
+ * Distraction Event Dispute & Adaptive Auto-Tuning Modal
+ * Enables students/users to challenge false-positive flags (e.g. typing posture, thinking head shakes, discussion)
+ * and automatically adapts the CV engine's tolerance to avoid repeating the warning.
+ */
+export interface DistractionDisputeModalProps {
+  isOpen: boolean;
+  event: {
+    id: string;
+    label: string;
+    durationSec: number;
+    time?: string;
+  } | null;
+  onClose: () => void;
+  onSubmitDispute: (reason: 'posture_adjustment' | 'thinking_gesture' | 'speaking_proctor' | 'environmental_glance' | 'false_alarm_sensor' | 'other', note?: string) => void;
+}
+
+export const DistractionDisputeModal: React.FC<DistractionDisputeModalProps> = ({
+  isOpen,
+  event,
+  onClose,
+  onSubmitDispute,
+}) => {
+  const [selectedReason, setSelectedReason] = React.useState<
+    'posture_adjustment' | 'thinking_gesture' | 'speaking_proctor' | 'environmental_glance' | 'false_alarm_sensor' | 'other'
+  >('posture_adjustment');
+  const [note, setNote] = React.useState<string>('');
+
+  if (!isOpen || !event) return null;
+
+  const REASONS = [
+    {
+      id: 'posture_adjustment' as const,
+      label: 'Natural Posture / Typing Head Position',
+      desc: 'Looking down at mechanical keyboard or brief neck stretch/tilt.',
+    },
+    {
+      id: 'thinking_gesture' as const,
+      label: 'Thinking Head Shake / Solving Gesture',
+      desc: 'Brief head nod, head shake, or ceiling glance while reasoning through a problem.',
+    },
+    {
+      id: 'speaking_proctor' as const,
+      label: 'Vocal Clarification / Speaking to Instructor',
+      desc: 'Legitimate question asked aloud or verbal self-talk during exam.',
+    },
+    {
+      id: 'environmental_glance' as const,
+      label: 'Physical Workspace Reference / Allowed Material',
+      desc: 'Consulting approved textbook, scratchpad, or physical desk notes.',
+    },
+    {
+      id: 'false_alarm_sensor' as const,
+      label: 'Lighting Shift / Optical Sensor Jitter',
+      desc: 'Room shadow, backlight glare, or web camera latency glitch.',
+    },
+    {
+      id: 'other' as const,
+      label: 'Other Contextual Activity',
+      desc: 'Provide custom clarification below.',
+    },
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-[#E2E8F0] space-y-5">
+        <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-[#0F172A]">Dispute Distraction Flag</h2>
+              <p className="text-xs text-[#64748B]">
+                Auto-tunes detection sensitivity to prevent recurrent false alerts
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Flagged Event Details Summary */}
+        <div className="p-3 bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] flex items-center justify-between text-xs">
+          <div>
+            <span className="text-[#64748B] font-medium">Flagged Event: </span>
+            <strong className="text-[#0F172A] font-semibold">{event.label}</strong>
+          </div>
+          <span className="font-mono text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 font-bold">
+            {event.durationSec}s Duration
+          </span>
+        </div>
+
+        {/* Reason Selector */}
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+            Select Context Reason
+          </label>
+          <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+            {REASONS.map((r) => (
+              <label
+                key={r.id}
+                onClick={() => setSelectedReason(r.id)}
+                className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
+                  selectedReason === r.id
+                    ? 'bg-blue-50/70 border-blue-400 text-blue-950 shadow-2xs'
+                    : 'bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#334155]'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="dispute_reason"
+                  checked={selectedReason === r.id}
+                  onChange={() => setSelectedReason(r.id)}
+                  className="mt-0.5 accent-blue-600"
+                />
+                <div className="text-xs">
+                  <div className="font-bold">{r.label}</div>
+                  <div className="text-[11px] text-[#64748B] mt-0.5">{r.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Optional Context Note */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-[#0F172A] flex items-center justify-between">
+            <span>Additional Explanation (Optional)</span>
+            <span className="text-[11px] text-[#94A3B8]">Logged to audit trail</span>
+          </label>
+          <textarea
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="e.g., solving quadratic equation on physical paper pad..."
+            className="w-full text-xs p-2.5 rounded-lg border border-[#E2E8F0] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+
+        {/* Auto-Tuning Assurance Banner */}
+        <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-900 text-xs flex items-start gap-2">
+          <Sparkles className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+          <div className="leading-snug">
+            <strong>Adaptive Calibration:</strong> Submitting this dispute immediately adapts the CV engine tolerance by +15%, increasing temporal hysteresis and zero-deviation angles.
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#E2E8F0]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-xs font-semibold text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] rounded-lg transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onSubmitDispute(selectedReason, note);
+              onClose();
+            }}
+            className="px-5 py-2 text-xs font-semibold bg-[#2563EB] hover:bg-blue-700 text-white rounded-lg transition-colors shadow-sm cursor-pointer flex items-center gap-1.5"
+          >
+            <CheckCircle className="w-3.5 h-3.5" />
+            <span>Confirm & Auto-Tune</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

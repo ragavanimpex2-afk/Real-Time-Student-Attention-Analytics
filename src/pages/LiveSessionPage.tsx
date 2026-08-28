@@ -46,6 +46,7 @@ import {
 import { AttentionCVEngine, DEFAULT_WEIGHTS } from '../lib/cvEngine';
 import { MotionSparkline } from '../components/MotionSparkline';
 import { CalibrationStep } from '../components/CalibrationStep';
+import { DistractionDisputeModal } from '../components/UIComponents';
 
 interface LiveSessionPageProps {
   weights: AttentionWeightsConfig;
@@ -66,6 +67,10 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isInitializingModel, setIsInitializingModel] = useState(false);
   const [activeManualTrigger, setActiveManualTrigger] = useState<DistractionState | null>(null);
+
+  // Dispute & Adaptive Auto-Tuning state
+  const [disputingEvent, setDisputingEvent] = useState<DetectedEvent | null>(null);
+  const [feedbackLog, setFeedbackLog] = useState<Array<{ eventId: string; reason: string; note?: string; autoTuned: boolean }>>([]);
 
   // Session Mode & Pomodoro Config
   const [sessionMode, setSessionMode] = useState<SessionMode>('exam');
@@ -390,6 +395,56 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
     }
   };
 
+  const handleOpenDispute = (event: DetectedEvent) => {
+    setDisputingEvent(event);
+  };
+
+  const handleSubmitDispute = (
+    reason: 'posture_adjustment' | 'thinking_gesture' | 'speaking_proctor' | 'environmental_glance' | 'false_alarm_sensor' | 'other',
+    note?: string
+  ) => {
+    if (!disputingEvent) return;
+
+    if (engineRef.current) {
+      engineRef.current.applyAutoTuning(reason, note);
+      engineRef.current.dismissActiveDistraction();
+    }
+
+    // Mark event as disputed in local live events and statsRef
+    setLiveEvents((prev) =>
+      prev.map((e) =>
+        e.id === disputingEvent.id
+          ? { ...e, is_disputed: true, dispute_reason: reason, dispute_note: note }
+          : e
+      )
+    );
+
+    const match = statsRef.current.completedEvents.find((e) => e.id === disputingEvent.id);
+    if (match) {
+      match.is_disputed = true;
+      match.dispute_reason = reason;
+      match.dispute_note = note;
+    }
+
+    if (statsRef.current.activeEvent && statsRef.current.activeEvent.id === disputingEvent.id) {
+      statsRef.current.activeEvent.is_disputed = true;
+      statsRef.current.activeEvent.dispute_reason = reason;
+      statsRef.current.activeEvent.dispute_note = note;
+      setActiveDistraction(null);
+    }
+
+    setFeedbackLog((prev) => [
+      ...prev,
+      { eventId: disputingEvent.id, reason, note, autoTuned: true },
+    ]);
+
+    setCalibrationNotification(
+      `Dispute accepted for "${disputingEvent.label}". System calibrated: Tolerances relaxed by +15% to eliminate recurring false warnings.`
+    );
+    setTimeout(() => setCalibrationNotification(null), 6000);
+    setDisputingEvent(null);
+  };
+
   // Calibration flow handlers
   const handleCalibrationComplete = (baseline: CalibrationBaseline) => {
     setCalibrationBaseline(baseline);
@@ -551,6 +606,7 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
       weights_used: weights,
       timeline: finalTimeline,
       events: finalizedEvents,
+      feedback_log: feedbackLog,
     };
 
     onFinishSession(completedSession);
@@ -863,12 +919,24 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
 
             {/* Live Distraction State Alert Badge */}
             {isDistracted && (
-              <div className="absolute top-4 right-4 z-10 px-3 py-1 bg-red-600 text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-1.5 animate-pulse">
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span className="uppercase">
-                  {latestFrame.distraction_state.replace('_', ' ')}
-                  {activeDistraction ? ` (${activeDistraction.durationSec}s)` : ''}
-                </span>
+              <div className="absolute top-4 right-4 z-10 flex items-center gap-1.5">
+                <div className="px-3 py-1 bg-red-600 text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-1.5 animate-pulse">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span className="uppercase">
+                    {latestFrame.distraction_state.replace('_', ' ')}
+                    {activeDistraction ? ` (${activeDistraction.durationSec}s)` : ''}
+                  </span>
+                </div>
+                {activeDistraction && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDispute(activeDistraction)}
+                    className="px-2 py-1 bg-black/80 hover:bg-black/95 text-amber-300 text-[11px] font-semibold rounded-lg border border-amber-400/40 backdrop-blur-xs transition-colors cursor-pointer flex items-center gap-1"
+                    title="Report false positive & auto-tune sensitivity"
+                  >
+                    <span>Dispute</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -1075,6 +1143,54 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                 }`}
               >
                 Drowsy Microsleep
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTriggerOverride('speaking_discussion')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  activeManualTrigger === 'speaking_discussion'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                    : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                }`}
+              >
+                Speaking / Discussion
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTriggerOverride('laughing_smiling')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  activeManualTrigger === 'laughing_smiling'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                    : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                }`}
+              >
+                Laughing / Smiling
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTriggerOverride('posture_adjustment')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  activeManualTrigger === 'posture_adjustment'
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                }`}
+              >
+                Posture / Typing Stretch
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTriggerOverride('head_dancing_erratic')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  activeManualTrigger === 'head_dancing_erratic'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                    : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F8FAFC]'
+                }`}
+              >
+                Head Dancing (Kinetic)
               </button>
 
               <button
@@ -1329,19 +1445,46 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                 {liveEvents.map((evt) => (
                   <div
                     key={evt.id}
-                    className="p-2 bg-[#F8FAFC] rounded-lg border border-[#E2E8F0] flex items-center justify-between text-xs"
+                    className={`p-2 rounded-lg border flex items-center justify-between text-xs transition-all ${
+                      evt.is_disputed
+                        ? 'bg-emerald-50/50 border-emerald-200 text-[#334155]'
+                        : 'bg-[#F8FAFC] border-[#E2E8F0]'
+                    }`}
                   >
                     <div className="flex items-center gap-2">
                       <span
                         className={`w-2 h-2 rounded-full ${
-                          evt.type === 'face_absent' ? 'bg-red-600' : 'bg-amber-500'
+                          evt.is_disputed
+                            ? 'bg-emerald-500'
+                            : evt.type === 'face_absent'
+                            ? 'bg-red-600'
+                            : 'bg-amber-500'
                         }`}
                       ></span>
-                      <span className="font-semibold text-[#0F172A]">{evt.label}</span>
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-[#0F172A]">{evt.label}</span>
+                        {evt.is_disputed && (
+                          <span className="text-[10px] text-emerald-700 font-medium">
+                            Disputed ({evt.dispute_reason?.replace(/_/g, ' ')}) • Auto-Tuned
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <span className="font-mono text-[#64748B] font-medium">
-                      {evt.durationSec}s
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[#64748B] font-medium">
+                        {evt.durationSec}s
+                      </span>
+                      {!evt.is_disputed && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDispute(evt)}
+                          className="px-2 py-0.5 rounded text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer"
+                          title="Dispute false positive and auto-tune threshold"
+                        >
+                          Dispute
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1353,6 +1496,14 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Distraction Dispute & Auto-Tuning Modal */}
+      <DistractionDisputeModal
+        isOpen={!!disputingEvent}
+        event={disputingEvent}
+        onClose={() => setDisputingEvent(null)}
+        onSubmitDispute={handleSubmitDispute}
+      />
     </div>
   );
 };

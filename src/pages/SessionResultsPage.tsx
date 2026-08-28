@@ -14,8 +14,8 @@ import {
   Lock,
   Target,
 } from 'lucide-react';
-import { SessionData, AIInsight } from '../types';
-import { ScoreRing, TimelineChart, InsightCard } from '../components/UIComponents';
+import { SessionData, AIInsight, DetectedEvent } from '../types';
+import { ScoreRing, TimelineChart, InsightCard, DistractionDisputeModal } from '../components/UIComponents';
 
 interface SessionResultsPageProps {
   session: SessionData;
@@ -24,12 +24,15 @@ interface SessionResultsPageProps {
 }
 
 export const SessionResultsPage: React.FC<SessionResultsPageProps> = ({
-  session,
+  session: initialSession,
   onBackToHistory,
   onStartNewSession,
 }) => {
-  const [insight, setInsight] = useState<AIInsight | null>(session.ai_insight || null);
+  const [session, setSession] = useState<SessionData>(initialSession);
+  const [insight, setInsight] = useState<AIInsight | null>(initialSession.ai_insight || null);
   const [isLoadingInsight, setIsLoadingInsight] = useState<boolean>(false);
+  const [disputingEvent, setDisputingEvent] = useState<DetectedEvent | null>(null);
+  const [disputeNotification, setDisputeNotification] = useState<string | null>(null);
 
   // Auto-fetch or generate AI insight from aggregated numbers only if missing
   useEffect(() => {
@@ -37,6 +40,42 @@ export const SessionResultsPage: React.FC<SessionResultsPageProps> = ({
       fetchAIInsight();
     }
   }, [session.id]);
+
+  const handleOpenDispute = (event: DetectedEvent) => {
+    setDisputingEvent(event);
+  };
+
+  const handleSubmitDispute = (
+    reason: 'posture_adjustment' | 'thinking_gesture' | 'speaking_proctor' | 'environmental_glance' | 'false_alarm_sensor' | 'other',
+    note?: string
+  ) => {
+    if (!disputingEvent) return;
+
+    setSession((prev) => {
+      const updatedEvents = (prev.events || []).map((e) =>
+        e.id === disputingEvent.id
+          ? { ...e, is_disputed: true, dispute_reason: reason, dispute_note: note }
+          : e
+      );
+
+      const newFeedback = [
+        ...(prev.feedback_log || []),
+        { eventId: disputingEvent.id, reason, note, autoTuned: true },
+      ];
+
+      return {
+        ...prev,
+        events: updatedEvents,
+        feedback_log: newFeedback,
+      };
+    });
+
+    setDisputeNotification(
+      `Dispute recorded for "${disputingEvent.label}". Engine sensitivity profile updated to minimize false detections during similar activities.`
+    );
+    setTimeout(() => setDisputeNotification(null), 5000);
+    setDisputingEvent(null);
+  };
 
   const fetchAIInsight = async () => {
     setIsLoadingInsight(true);
@@ -326,13 +365,33 @@ export const SessionResultsPage: React.FC<SessionResultsPageProps> = ({
         </div>
       </div>
 
+      {disputeNotification && (
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{disputeNotification}</span>
+          </div>
+          <button
+            onClick={() => setDisputeNotification(null)}
+            className="text-xs text-emerald-700 hover:text-emerald-900 font-bold px-2 py-0.5 cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Bottom Section: Detected Events Table */}
       <div
         id="detected-events-table-card"
         className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xs overflow-hidden"
       >
         <div className="p-5 border-b border-[#E2E8F0] flex items-center justify-between">
-          <h2 className="text-base font-bold text-[#0F172A]">Detected Events</h2>
+          <div>
+            <h2 className="text-base font-bold text-[#0F172A]">Detected Events & Distraction Log</h2>
+            <p className="text-xs text-[#64748B] mt-0.5">
+              Review flagged events. Challenge any false alarms to adapt system sensitivity.
+            </p>
+          </div>
           <span className="text-xs text-[#64748B] font-mono">
             {session.events?.length || 0} Events Logged
           </span>
@@ -343,27 +402,60 @@ export const SessionResultsPage: React.FC<SessionResultsPageProps> = ({
             {session.events.map((event) => (
               <div
                 key={event.id}
-                className="p-4 px-6 flex items-center justify-between hover:bg-[#F8FAFC] transition-colors"
+                className={`p-4 px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#F8FAFC] transition-colors ${
+                  event.is_disputed ? 'bg-emerald-50/30' : ''
+                }`}
               >
                 <div className="flex items-center gap-6">
                   <span className="text-xs font-mono font-semibold text-[#64748B]">
-                    {event.time}
+                    {event.time || `${Math.floor((event.durationSec || 0) / 60)}m`}
                   </span>
                   <div className="flex items-center gap-2.5">
                     <span
-                      className={`w-2 h-2 rounded-full ${
-                        event.type === 'face_absent' ? 'bg-[#DC2626]' : 'bg-[#F59E0B]'
+                      className={`w-2.5 h-2.5 rounded-full ${
+                        event.is_disputed
+                          ? 'bg-emerald-500'
+                          : event.type === 'face_absent'
+                          ? 'bg-[#DC2626]'
+                          : 'bg-[#F59E0B]'
                       }`}
                     ></span>
-                    <span className="text-sm font-semibold text-[#0F172A]">{event.label}</span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-[#0F172A]">{event.label}</span>
+                        {event.is_disputed && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            Disputed & Auto-Tuned
+                          </span>
+                        )}
+                      </div>
+                      {event.is_disputed && event.dispute_reason && (
+                        <p className="text-xs text-[#64748B] mt-0.5">
+                          Reason: <span className="font-medium text-[#334155] capitalize">{event.dispute_reason.replace(/_/g, ' ')}</span>
+                          {event.dispute_note ? ` — "${event.dispute_note}"` : ''}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                <div className="text-xs text-[#64748B] font-medium">
-                  Duration:{' '}
-                  {event.durationSec >= 60
-                    ? `${Math.floor(event.durationSec / 60)}m ${event.durationSec % 60}s`
-                    : `${event.durationSec}s`}
+                <div className="flex items-center gap-3 self-end sm:self-center">
+                  <div className="text-xs text-[#64748B] font-medium font-mono">
+                    Duration:{' '}
+                    {event.durationSec >= 60
+                      ? `${Math.floor(event.durationSec / 60)}m ${event.durationSec % 60}s`
+                      : `${event.durationSec}s`}
+                  </div>
+
+                  {!event.is_disputed && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDispute(event)}
+                      className="px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                    >
+                      Dispute Flag
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -378,6 +470,14 @@ export const SessionResultsPage: React.FC<SessionResultsPageProps> = ({
           </div>
         )}
       </div>
+
+      {/* Distraction Dispute Modal */}
+      <DistractionDisputeModal
+        isOpen={!!disputingEvent}
+        event={disputingEvent}
+        onClose={() => setDisputingEvent(null)}
+        onSubmitDispute={handleSubmitDispute}
+      />
     </div>
   );
 };

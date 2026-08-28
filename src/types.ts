@@ -20,9 +20,13 @@ export type DistractionState =
   | 'head_turned'
   | 'head_down_phone'
   | 'head_up_drift'
+  | 'head_dancing_erratic'
   | 'eyes_closed'
   | 'drowsy_microsleep'
   | 'rapid_gaze_darting'
+  | 'speaking_discussion'
+  | 'laughing_smiling'
+  | 'posture_adjustment'
   | 'face_absent'
   | 'multi_face_warning'
   | 'break_rest';
@@ -30,11 +34,30 @@ export type DistractionState =
 export type SessionMode = 'exam' | 'pomodoro_rest';
 
 export interface PomodoroConfig {
-  workMinutes: number; // e.g. 20
-  breakMinutes: number; // e.g. 15
-  currentPhase: 'work' | 'break';
-  isBreakActive: boolean;
-  phaseRemainingSec: number;
+  workMinutes?: number;
+  breakMinutes?: number;
+  workDurationMin: number; // e.g. 20
+  breakDurationMin: number; // e.g. 15
+  autoStartBreaks?: boolean;
+}
+
+export type DistractionFeedbackReason =
+  | 'posture_stretch' // Just stretching / adjusting chair / head movement
+  | 'reading_notes' // Reading physical notes / desk book
+  | 'speaking_allowed' // Asking doubt / permitted discussion
+  | 'laughing_smiling' // Smiling / social reaction
+  | 'self_break' // Taking a short self-directed breather
+  | 'false_alarm' // System misclassified completely
+  | 'confirmed_distraction'; // Yes, I was distracted
+
+export interface DistractionFeedbackEntry {
+  id: string;
+  timestamp: string;
+  original_state: DistractionState;
+  user_reason: DistractionFeedbackReason;
+  comment?: string;
+  corrected_to: DistractionState;
+  auto_tuned_applied?: boolean;
 }
 
 export interface CVTelemetryFrame {
@@ -44,6 +67,9 @@ export interface CVTelemetryFrame {
   eye_openness: number; // 0.0 to 1.0 (mean of both eyes)
   eye_openness_left: number;
   eye_openness_right: number;
+  speaking_score?: number; // 0.0 to 1.0 (lip movement/jaw oscillation)
+  smile_score?: number; // 0.0 to 1.0 (smile intensity)
+  jaw_openness?: number; // 0.0 to 1.0
   gaze_direction: GazeDirection;
   gaze_forward_score: number; // 0.0 to 1.0
   head_alignment: number; // 0.0 to 1.0 (1.0 = facing screen directly)
@@ -100,10 +126,24 @@ export interface DetectedEvent {
   id: string;
   time: string; // e.g. "10:14"
   timeOffsetSec: number;
-  type: 'gaze_away' | 'face_absent' | 'head_turned' | 'prolonged_closure' | 'multi_face';
+  type:
+    | 'gaze_away'
+    | 'face_absent'
+    | 'head_turned'
+    | 'prolonged_closure'
+    | 'multi_face'
+    | 'rapid_gaze_darting'
+    | 'head_dancing_erratic'
+    | 'speaking_discussion'
+    | 'laughing_smiling'
+    | 'posture_adjustment';
   label: string;
   durationSec: number;
   severity: 'low' | 'medium' | 'high';
+  is_disputed?: boolean;
+  dispute_reason?: string;
+  dispute_comment?: string;
+  dispute_note?: string;
 }
 
 export interface AIInsight {
@@ -165,6 +205,9 @@ export interface SessionData {
   timeline: TimelineDataPoint[];
   events: DetectedEvent[];
   weights_used: AttentionWeightsConfig;
+  disputes_count?: number;
+  feedback_log?: DistractionFeedbackEntry[];
+  auto_tuned_count?: number;
 }
 
 export interface PrivacySettings {
