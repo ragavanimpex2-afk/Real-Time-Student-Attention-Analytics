@@ -2,14 +2,80 @@
  * Type definitions for Privacy-First Real-Time Student Attention Analytics
  */
 
+export type UserRole = 'admin' | 'student';
+
 export interface User {
   id: string;
   email: string;
   name: string;
   role: string;
+  roleType: UserRole;
   avatarUrl?: string;
   oauth_provider: 'google' | 'institutional_sso' | 'local';
   created_at: string;
+}
+
+export type WarningResponseMode = 'interactive_acknowledge' | 'audio_beep' | 'visual_banner' | 'strict_escort';
+
+export interface WarningPolicyConfig {
+  warningSound: boolean;
+  visualAlert: boolean;
+  screenBorderFlash: boolean;
+  requireActiveResponse: boolean; // Student must press "I am Back / Acknowledge" button
+  maxDistractionsAllowed: number; // e.g., 5 distraction strikes before flagging
+  distractionTimeoutSec: number; // e.g., 5-8 seconds before warning triggers
+  escalationLevels: {
+    level1: string; // "Gentle HUD prompt"
+    level2: string; // "Audible chime & warning badge"
+    level3: string; // "Active response required within 10s"
+    level4: string; // "Flagged to Lab Coordinator report"
+  };
+}
+
+export interface LabSessionConfig {
+  id: string;
+  name: string;
+  code: string;
+  instructorName: string;
+  cohortClass: string;
+  durationHours: number; // How many hours the lab is (e.g. 2.0 hours)
+  durationMinutes: number; // e.g. 120 minutes total
+  description: string;
+  prohibitedBehaviors: string[]; // "What should not be done"
+  allowedBehaviors: string[]; // "Permitted behaviors"
+  maxDistractionsAllowed: number; // Max allowed distractions
+  distractionGracePeriodSec: number; // Grace period in seconds
+  warningResponseMode: WarningResponseMode;
+  warningSoundEnabled: boolean;
+  minTargetAttentionScore: number; // Target proxy e.g. 70%
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface WarningResponseRecord {
+  id: string;
+  warningNumber: number;
+  timestamp: string;
+  timeOffsetSec: number;
+  triggerReason: string;
+  responseStatus: 'acknowledged' | 'ignored' | 'pending';
+  responseTimeSec: number;
+}
+
+export interface StudentLabStatus {
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  activeLabId: string;
+  labName: string;
+  timeSpentSec: number;
+  distractionCount: number;
+  lastWarningReason?: string;
+  warningResponses: WarningResponseRecord[];
+  currentAttentionScore: number;
+  complianceStatus: 'compliant' | 'warning' | 'probation_exceeded';
+  isCurrentlyOnline: boolean;
+  lastActive: string;
 }
 
 export type GazeDirection = 'forward' | 'away_left' | 'away_right' | 'away_up' | 'away_down';

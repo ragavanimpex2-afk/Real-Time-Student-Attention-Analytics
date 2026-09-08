@@ -23,6 +23,12 @@ import {
   Pause,
   RotateCcw,
   Volume2,
+  Building2,
+  BookOpen,
+  Info,
+  BellRing,
+  X,
+  Check,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -42,6 +48,8 @@ import {
   DistractionState,
   SessionMode,
   PomodoroConfig,
+  LabSessionConfig,
+  WarningResponseRecord,
 } from '../types';
 import { AttentionCVEngine, DEFAULT_WEIGHTS } from '../lib/cvEngine';
 import { MotionSparkline } from '../components/MotionSparkline';
@@ -52,12 +60,16 @@ interface LiveSessionPageProps {
   weights: AttentionWeightsConfig;
   onFinishSession: (session: SessionData) => void;
   onOpenSettings: () => void;
+  activeLab?: LabSessionConfig;
+  onRecordWarningResponse?: (record: WarningResponseRecord) => void;
 }
 
 export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
   weights,
   onFinishSession,
   onOpenSettings,
+  activeLab,
+  onRecordWarningResponse,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -67,6 +79,18 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isInitializingModel, setIsInitializingModel] = useState(false);
   const [activeManualTrigger, setActiveManualTrigger] = useState<DistractionState | null>(null);
+
+  // Lab Rules & Prohibitions Modal State
+  const [showProhibitionsModal, setShowProhibitionsModal] = useState(false);
+
+  // Active Warning Response State
+  const [pendingWarning, setPendingWarning] = useState<{
+    id: string;
+    warningNum: number;
+    reason: string;
+    triggeredAt: number;
+  } | null>(null);
+  const [warningHistory, setWarningHistory] = useState<WarningResponseRecord[]>([]);
 
   // Dispute & Adaptive Auto-Tuning state
   const [disputingEvent, setDisputingEvent] = useState<DetectedEvent | null>(null);
@@ -273,6 +297,48 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
     setTimeout(() => setCalibrationNotification(null), 5000);
   };
 
+  // Warning Chime & Sound Trigger
+  const playWarningAudioBeep = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.35);
+    } catch (e) {
+      // AudioContext may be restricted before user gesture
+    }
+  };
+
+  const handleAcknowledgeWarning = () => {
+    if (!pendingWarning) return;
+    const responseSec = Math.max(
+      0.6,
+      Math.round(((Date.now() - pendingWarning.triggeredAt) / 1000) * 10) / 10
+    );
+    const record: WarningResponseRecord = {
+      id: pendingWarning.id,
+      warningNumber: pendingWarning.warningNum,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timeOffsetSec: elapsedSec,
+      triggerReason: pendingWarning.reason,
+      responseStatus: 'acknowledged',
+      responseTimeSec: responseSec,
+    };
+    if (onRecordWarningResponse) {
+      onRecordWarningResponse(record);
+    }
+    setWarningHistory((prev) => [record, ...prev]);
+    setPendingWarning(null);
+  };
+
   // Initialize CV Engine
   const startCVEngine = async () => {
     if (engineRef.current) engineRef.current.stop();
@@ -338,6 +404,22 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
           if (!isCalibratingRef.current) {
             statsRef.current.activeEvent = event;
             setActiveDistraction(event);
+
+            // Trigger lab warning response if configured
+            if (activeLab) {
+              setPendingWarning((prev) => {
+                if (prev) return prev;
+                if (activeLab.warningSoundEnabled) {
+                  playWarningAudioBeep();
+                }
+                return {
+                  id: event.id,
+                  warningNum: statsRef.current.completedEvents.length + 1,
+                  reason: event.label,
+                  triggeredAt: Date.now(),
+                };
+              });
+            }
 
             setLiveEvents((prev) => {
               const index = prev.findIndex((e) => e.id === event.id);
@@ -624,6 +706,86 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
 
   return (
     <div id="live-session-container" className="space-y-6 animate-in fade-in duration-200">
+      {/* Active Lab Session Header & Duration Countdown */}
+      {activeLab && (
+        <div
+          id="active-lab-ribbon"
+          className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4"
+        >
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center shrink-0">
+              <Building2 className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-bold text-sm text-[#0F172A] truncate">
+                  {activeLab.name}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 uppercase">
+                  {activeLab.courseCode}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                  {activeLab.durationHours} hrs total
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 truncate mt-0.5">
+                Instructor: {activeLab.instructor} • Max Allowed Distractions: {activeLab.maxDistractionsAllowed} strikes
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Lab Countdown */}
+            <div className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-2">
+              <Clock className="w-4 h-4 text-indigo-600" />
+              <div className="text-left">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block leading-tight">
+                  Lab Remaining
+                </span>
+                <span className="text-xs font-mono font-bold text-slate-800">
+                  {formatTime(Math.max(0, activeLab.durationMinutes * 60 - elapsedSec))}
+                </span>
+              </div>
+            </div>
+
+            {/* Distraction Strikes Tracker */}
+            <div
+              className={`px-3 py-1.5 rounded-xl border flex items-center gap-2 ${
+                statsRef.current.completedEvents.length >= activeLab.maxDistractionsAllowed
+                  ? 'bg-red-50 border-red-200 text-red-700'
+                  : 'bg-slate-50 border-slate-200 text-slate-700'
+              }`}
+            >
+              <AlertTriangle
+                className={`w-4 h-4 ${
+                  statsRef.current.completedEvents.length >= activeLab.maxDistractionsAllowed
+                    ? 'text-red-600'
+                    : 'text-amber-500'
+                }`}
+              />
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block leading-tight">
+                  Strikes
+                </span>
+                <span className="text-xs font-mono font-bold">
+                  {statsRef.current.completedEvents.length} / {activeLab.maxDistractionsAllowed}
+                </span>
+              </div>
+            </div>
+
+            {/* What should NOT be done Button */}
+            <button
+              id="btn-view-lab-prohibitions"
+              onClick={() => setShowProhibitionsModal(true)}
+              className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Info className="w-4 h-4 text-indigo-600" />
+              <span>Lab Prohibitions ({activeLab.prohibitedBehaviors.length})</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Banner: Mode Selection & Privacy Enforcement */}
       <div
         id="privacy-banner"
@@ -885,6 +1047,51 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
         <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center gap-2.5">
           <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
           <span>{cameraError}</span>
+        </div>
+      )}
+
+      {/* Interactive Warning Response Alert */}
+      {pendingWarning && (
+        <div
+          id="interactive-warning-banner"
+          className="p-4 sm:p-5 bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl shadow-lg border border-red-400 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-3 duration-200"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center shrink-0">
+              <BellRing className="w-6 h-6 text-white animate-bounce" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-bold text-sm tracking-wide uppercase">
+                  ⚠️ Lab Attention Warning #{pendingWarning.warningNum}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-black/30 text-[11px] font-mono font-bold">
+                  {pendingWarning.reason}
+                </span>
+                {activeLab && (
+                  <span className="text-xs bg-red-800/80 px-2 py-0.5 rounded-full font-bold">
+                    Strike {pendingWarning.warningNum} of {activeLab.maxDistractionsAllowed}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-red-100 mt-1">
+                {activeLab?.warningResponseMode === 'interactive_acknowledge'
+                  ? 'Warning Policy: You must actively click the button below to confirm you are re-engaging with the lab tasks.'
+                  : 'Distraction detected. Please refocus on your screen.'}
+              </p>
+            </div>
+          </div>
+
+          {activeLab?.warningResponseMode === 'interactive_acknowledge' && (
+            <button
+              id="btn-acknowledge-lab-warning"
+              onClick={handleAcknowledgeWarning}
+              className="w-full sm:w-auto px-5 py-2.5 bg-white text-red-700 hover:bg-red-50 font-bold text-xs sm:text-sm rounded-xl shadow-md transition-all transform active:scale-95 cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
+            >
+              <Check className="w-4 h-4 text-emerald-600" />
+              <span>Acknowledge & Refocus</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -1565,6 +1772,86 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
         onClose={() => setDisputingEvent(null)}
         onSubmitDispute={handleSubmitDispute}
       />
+
+      {/* Lab Prohibitions & Rules Modal */}
+      {showProhibitionsModal && activeLab && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center font-bold">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-[#0F172A]">
+                    {activeLab.name} - Rules & Prohibitions
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Duration: {activeLab.durationHours} Hours • Max {activeLab.maxDistractionsAllowed} Distractions Allowed
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowProhibitionsModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+              {/* Prohibitions section */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-red-600 flex items-center gap-1.5 mb-2">
+                  <X className="w-4 h-4" />
+                  <span>What Should NOT Be Done (Prohibited in this Lab)</span>
+                </h4>
+                <div className="space-y-2">
+                  {activeLab.prohibitedBehaviors.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="p-2.5 bg-red-50/70 border border-red-200 rounded-xl text-xs text-red-900 flex items-start gap-2.5"
+                    >
+                      <span className="w-5 h-5 rounded-full bg-red-200 text-red-700 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">
+                        {idx + 1}
+                      </span>
+                      <div>
+                        <span className="font-semibold block">{item.name}</span>
+                        <span className="text-[11px] text-red-700 block mt-0.5">{item.description}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Warning Policy section */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs text-slate-700">
+                <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                  <BellRing className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Warning Response Policy</span>
+                </div>
+                <p className="text-[11px] text-slate-600">
+                  Mode: <strong className="capitalize">{activeLab.warningResponseMode.replace('_', ' ')}</strong>
+                </p>
+                <p className="text-[11px] text-slate-600">
+                  When a distraction exceeds {activeLab.distractionDurationThresholdSec} seconds, an official warning strike is registered.
+                  {activeLab.warningResponseMode === 'interactive_acknowledge' &&
+                    ' You must actively acknowledge the warning banner on-screen to confirm you have refocused.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end">
+              <button
+                onClick={() => setShowProhibitionsModal(false)}
+                className="px-4 py-2 bg-[#0F172A] text-white hover:bg-slate-800 text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Understood, Return to Lab
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
