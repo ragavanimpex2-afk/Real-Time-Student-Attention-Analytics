@@ -652,17 +652,17 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
         </div>
 
         {/* Mode Selector & Action Controls */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Prominent Real-time LIVE Session Clock Badge */}
           <div
             id="session-live-clock-badge"
-            className="px-3.5 py-1.5 bg-[#0F172A] text-white rounded-xl flex items-center gap-2.5 border border-slate-700 shadow-xs"
+            className="px-3 py-1.5 bg-[#0F172A] text-white rounded-xl flex items-center gap-2 border border-slate-700 shadow-xs"
           >
-            <span className="relative flex h-2.5 w-2.5">
+            <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-600"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-600"></span>
             </span>
-            <span className="font-mono text-sm font-bold tracking-wider">
+            <span className="font-mono text-xs sm:text-sm font-bold tracking-wider">
               {isCalibrating ? 'CALIBRATING...' : formatTime(elapsedSec)}
             </span>
             <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest bg-red-950/80 px-1.5 py-0.5 rounded border border-red-800/60">
@@ -671,53 +671,49 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
           </div>
 
           {/* Mode Switcher Pills */}
-          <div className="flex items-center bg-[#F1F5F9] p-1 rounded-xl border border-[#E2E8F0]">
+          <div className="flex items-center bg-[#F1F5F9] p-1 rounded-xl border border-[#E2E8F0] overflow-x-auto max-w-full">
             <button
               id="mode-btn-exam"
               onClick={() => handleModeChange('exam')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
                 sessionMode === 'exam'
                   ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-[#64748B] hover:text-[#0F172A]'
               }`}
             >
               <Lock className="w-3.5 h-3.5" />
-              <span>Exam Mode</span>
+              <span>Exam</span>
             </button>
             <button
               id="mode-btn-pomodoro"
               onClick={() => handleModeChange('pomodoro_rest')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
                 sessionMode === 'pomodoro_rest'
                   ? 'bg-amber-600 text-white shadow-xs'
                   : 'text-[#64748B] hover:text-[#0F172A]'
               }`}
             >
               <Coffee className="w-3.5 h-3.5" />
-              <span>Rest Mode (20m/15m)</span>
+              <span>Rest Mode</span>
             </button>
           </div>
 
           <button
             onClick={handleStartRecalibration}
-            className="text-xs font-semibold text-[#0F172A] hover:text-blue-600 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+            className="text-xs font-semibold text-[#0F172A] hover:text-blue-600 flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC] transition-colors cursor-pointer whitespace-nowrap"
           >
             <Target className="w-3.5 h-3.5 text-blue-600" />
-            <span>5s Calibration</span>
+            <span className="hidden xs:inline">5s Calibrate</span>
+            <span className="xs:hidden">Calib</span>
           </button>
 
           <button
             onClick={onOpenSettings}
-            className="text-xs font-semibold text-[#64748B] hover:text-[#0F172A] flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer"
+            className="text-xs font-semibold text-[#64748B] hover:text-[#0F172A] flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer whitespace-nowrap"
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>Thresholds</span>
+            <span>Config</span>
           </button>
-
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs font-semibold">
-            <EyeOff className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">No Video Stored</span>
-          </div>
         </div>
       </div>
 

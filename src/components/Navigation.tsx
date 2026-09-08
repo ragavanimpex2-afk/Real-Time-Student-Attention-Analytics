@@ -42,7 +42,7 @@ const NAV_ITEMS = [
   { id: 'privacy', label: 'Privacy', icon: Shield },
 ];
 
-export const Sidebar: React.FC<NavigationProps> = ({
+export const Sidebar: React.FC<NavigationProps & { isCollapsed?: boolean; setIsCollapsed?: (val: boolean) => void }> = ({
   activeTab,
   setActiveTab,
   onOpenSettings,
@@ -51,24 +51,26 @@ export const Sidebar: React.FC<NavigationProps> = ({
   return (
     <aside
       id="app-sidebar"
-      className="hidden md:flex w-64 bg-white border-r border-[#E2E8F0] flex-col justify-between h-screen shrink-0 sticky top-0"
+      className="desktop-sidebar-only hidden md:flex w-64 bg-white border-r border-[#E2E8F0] flex-col justify-between h-screen shrink-0 sticky top-0 z-20"
     >
       <div>
         {/* Brand Header */}
-        <div className="p-6 border-b border-[#E2E8F0] flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-xs">
-            <Radio className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="font-semibold text-[15px] text-[#0F172A] tracking-tight leading-tight">
-              Edge Analytics
-            </h1>
-            <p className="text-xs text-[#64748B] font-mono">V3.2.0 RESEARCH</p>
+        <div className="p-5 lg:p-6 border-b border-[#E2E8F0] flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-xs shrink-0">
+              <Radio className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="font-semibold text-sm lg:text-[15px] text-[#0F172A] tracking-tight leading-tight truncate">
+                Edge Analytics
+              </h1>
+              <p className="text-[11px] text-[#64748B] font-mono">V3.2.0 RESEARCH</p>
+            </div>
           </div>
         </div>
 
         {/* Navigation Menu */}
-        <nav className="p-4 space-y-1.5" id="sidebar-nav">
+        <nav className="p-3 lg:p-4 space-y-1.5" id="sidebar-nav">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -77,7 +79,7 @@ export const Sidebar: React.FC<NavigationProps> = ({
                 key={item.id}
                 id={`nav-link-${item.id}`}
                 onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
                   isActive
                     ? 'bg-[#EFF6FF] text-[#2563EB] font-semibold'
                     : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]'
@@ -103,7 +105,7 @@ export const Sidebar: React.FC<NavigationProps> = ({
         <button
           id="btn-sidebar-settings"
           onClick={onOpenSettings}
-          className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+          className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
         >
           <Settings className="w-4 h-4 text-[#64748B]" />
           <span>Settings</span>
@@ -112,14 +114,14 @@ export const Sidebar: React.FC<NavigationProps> = ({
         <button
           id="btn-sidebar-account"
           onClick={() => setActiveTab('privacy')}
-          className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+          className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
         >
           <User className="w-4 h-4 text-[#64748B]" />
           <span>Account & Security</span>
         </button>
 
         {/* Privacy Pill */}
-        <div className="mt-3 p-2.5 bg-[#F8FAFC] rounded-lg border border-[#E2E8F0] text-[11px] text-[#64748B] flex items-center gap-2">
+        <div className="mt-3 p-2.5 bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] text-[11px] text-[#64748B] flex items-center gap-2">
           <EyeOff className="w-3.5 h-3.5 text-blue-600 shrink-0" />
           <span className="truncate">Edge Processing • No Video Stored</span>
         </div>
