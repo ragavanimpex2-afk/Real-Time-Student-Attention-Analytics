@@ -29,6 +29,88 @@ export const DEFAULT_LABS: LabSessionConfig[] = [
     minTargetAttentionScore: 75,
     isActive: true,
     createdAt: '2026-08-20T08:00:00Z',
+    questions: [
+      {
+        id: 'q_sys_1',
+        category: 'Virtual Memory & MMU',
+        points: 20,
+        type: 'multiple_choice',
+        questionText: 'In a modern monolithic Unix/Linux OS, what mechanism prevents a user-space thread from reading arbitrary physical memory allocated to another process or the kernel?',
+        options: [
+          'Software interrupts dispatched via Ring 0 trap tables',
+          'Hardware MMU page tables and privileged segment rings (Ring 3 vs Ring 0)',
+          'Compiler-enforced pointer boundary validation checks',
+          'Round-robin scheduler process preemption timers',
+        ],
+        correctOptionIndex: 1,
+        explanation: 'The Memory Management Unit (MMU) translates virtual addresses to physical pages and enforces hardware-level page protection bits based on CPU privilege rings.',
+      },
+      {
+        id: 'q_sys_2',
+        category: 'Concurrency & Deadlocks',
+        points: 20,
+        type: 'multiple_choice',
+        questionText: 'Which condition is NOT one of Coffman\'s four fundamental conditions required for a resource deadlock to occur?',
+        options: [
+          'Mutual Exclusion',
+          'Hold and Wait',
+          'Preemptive Resource Revocation',
+          'Circular Wait condition',
+        ],
+        correctOptionIndex: 2,
+        explanation: 'Coffman requires "No preemption" (resources cannot be forcibly taken away). Preemptive resource revocation actually breaks and prevents deadlocks.',
+      },
+      {
+        id: 'q_sys_3',
+        category: 'Kernel Thread Synchronization',
+        points: 25,
+        type: 'code_snippet',
+        questionText: 'Complete the thread-safe circular buffer consumer function using POSIX mutex and condition variable signaling.',
+        starterCode: `int dequeue_item(CircularBuffer *cb, Item *out_item) {
+    pthread_mutex_lock(&cb->lock);
+    
+    // TODO: Wait while buffer is empty
+    while (cb->count == 0) {
+        pthread_cond_wait(&cb->not_empty, &cb->lock);
+    }
+    
+    // Retrieve item from circular queue
+    *out_item = cb->items[cb->head];
+    cb->head = (cb->head + 1) % cb->capacity;
+    cb->count--;
+    
+    // Signal producer that a slot has freed up
+    pthread_cond_signal(&cb->not_full);
+    
+    pthread_mutex_unlock(&cb->lock);
+    return 0;
+}`,
+        explanation: 'Standard producer-consumer implementation using conditional variables with while loop predicate re-checking.',
+      },
+      {
+        id: 'q_sys_4',
+        category: 'Memory Management',
+        points: 15,
+        type: 'multiple_choice',
+        questionText: 'When a process invokes the fork() system call in modern operating systems, how does Copy-On-Write (COW) optimize memory utilization?',
+        options: [
+          'Duplicate pages immediately in swap disk space',
+          'Mark shared pages as Read-Only; duplicate page frame only upon write fault',
+          'Allocate a separate contiguous physical block for the child heap',
+          'Zero-fill all pages prior to user-space thread resumption',
+        ],
+        correctOptionIndex: 1,
+        explanation: 'COW shares parent memory pages marked read-only until either process attempts a write, triggering a page fault that allocates a private replica.',
+      },
+      {
+        id: 'q_sys_5',
+        category: 'Virtualization & Hypervisors',
+        points: 20,
+        type: 'short_answer',
+        questionText: 'Briefly explain why Translation Lookaside Buffer (TLB) shootdown generates noticeable inter-processor interrupt (IPI) overhead in multi-vCPU virtualization.',
+        explanation: 'When a page table mapping is modified, all other CPU cores caching that stale translation must be interrupted via IPI to invalidate their local TLB entries, causing pipeline stalls.',
+      },
+    ],
   },
   {
     id: 'lab_ai320_vision',
@@ -55,6 +137,41 @@ export const DEFAULT_LABS: LabSessionConfig[] = [
     minTargetAttentionScore: 70,
     isActive: false,
     createdAt: '2026-08-18T10:30:00Z',
+    questions: [
+      {
+        id: 'q_ai_1',
+        category: 'Convolutional Kernels',
+        points: 25,
+        type: 'multiple_choice',
+        questionText: 'Given an input feature map of dimensions 32x32x3, what is the output spatial size after applying a 5x5 convolution with padding=2 and stride=1?',
+        options: ['28x28', '30x30', '32x32', '36x36'],
+        correctOptionIndex: 2,
+        explanation: 'Output = floor((32 + 2*2 - 5)/1) + 1 = 32. Same padding preserves spatial dimensions.',
+      },
+      {
+        id: 'q_ai_2',
+        category: 'Object Detection Metrics',
+        points: 25,
+        type: 'multiple_choice',
+        questionText: 'In computer vision object detection evaluation, what does Intersection over Union (IoU) evaluate?',
+        options: [
+          'The ratio of true positives to false negatives',
+          'The area of overlap divided by the area of union between predicted and ground truth bounding boxes',
+          'The gradient flow between convolutional residual layers',
+          'The cosine similarity between face feature embeddings',
+        ],
+        correctOptionIndex: 1,
+        explanation: 'IoU measures bounding box overlap accuracy: Area of Overlap / Area of Union.',
+      },
+      {
+        id: 'q_ai_3',
+        category: 'Model Regularization',
+        points: 25,
+        type: 'short_answer',
+        questionText: 'Describe how Batch Normalization reduces internal covariate shift and stabilizes training in deep CNN architectures.',
+        explanation: 'Batch Normalization standardizes intermediate activations across mini-batches, preserving gradient scale and enabling higher learning rates without vanishing gradients.',
+      },
+    ],
   },
   {
     id: 'lab_bio210_neuro',
@@ -81,6 +198,26 @@ export const DEFAULT_LABS: LabSessionConfig[] = [
     minTargetAttentionScore: 68,
     isActive: false,
     createdAt: '2026-08-15T09:00:00Z',
+    questions: [
+      {
+        id: 'q_bio_1',
+        category: 'Membrane Potentials',
+        points: 30,
+        type: 'multiple_choice',
+        questionText: 'Under standard physiological conditions, which ion has the most negative equilibrium potential calculated via the Nernst equation in mammalian neurons?',
+        options: ['Sodium (Na+)', 'Potassium (K+)', 'Calcium (Ca2+)', 'Chloride (Cl-)'],
+        correctOptionIndex: 1,
+        explanation: 'Potassium (K+) equilibrium potential (EK) is typically around -90 mV due to high intracellular concentration.',
+      },
+      {
+        id: 'q_bio_2',
+        category: 'Action Potential Dynamics',
+        points: 35,
+        type: 'short_answer',
+        questionText: 'Explain the role of voltage-gated sodium channel inactivation gates (h-gate) in establishing the absolute refractory period.',
+        explanation: 'Following depolarization, the inactivation gate closes, rendering the channel non-conductive regardless of membrane potential until hyperpolarization resets it.',
+      },
+    ],
   },
 ];
 

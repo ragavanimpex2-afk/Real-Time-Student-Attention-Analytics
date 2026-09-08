@@ -19,8 +19,10 @@ import {
   Info,
   ChevronRight,
   Sparkles,
+  Send,
+  Award,
 } from 'lucide-react';
-import { LabSessionConfig, StudentLabStatus, WarningResponseMode } from '../types';
+import { LabSessionConfig, StudentLabStatus, WarningResponseMode, User } from '../types';
 
 interface AdminLabManagerPageProps {
   labs: LabSessionConfig[];
@@ -29,6 +31,7 @@ interface AdminLabManagerPageProps {
   onSetActiveLab: (labId: string) => void;
   studentRoster: StudentLabStatus[];
   onManualIssueWarning?: (studentId: string, reason: string) => void;
+  currentUser?: User | null;
 }
 
 export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
@@ -38,11 +41,13 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
   onSetActiveLab,
   studentRoster,
   onManualIssueWarning,
+  currentUser,
 }) => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingLab, setEditingLab] = useState<LabSessionConfig | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<StudentLabStatus | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'compliant' | 'warning' | 'probation_exceeded'>('all');
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   // New/Edit Lab Form State
   const [formName, setFormName] = useState('');
@@ -150,11 +155,26 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
       alert('You must keep at least one active lab configuration in the system.');
       return;
     }
+    const labToDelete = labs.find((l) => l.id === labId);
+    if (!window.confirm(`Are you sure you want to remove the lab "${labToDelete?.name || 'Lab'}"? Enrolled students will be re-routed to the remaining active lab.`)) {
+      return;
+    }
     const updated = labs.filter((l) => l.id !== labId);
     onUpdateLabs(updated);
     if (activeLab.id === labId && updated.length > 0) {
       onSetActiveLab(updated[0].id);
+      setActionNotice(`Removed "${labToDelete?.name}". Active lab switched to "${updated[0].name}".`);
+    } else {
+      setActionNotice(`Removed "${labToDelete?.name}" successfully.`);
     }
+    setTimeout(() => setActionNotice(null), 5000);
+  };
+
+  const handleSwitchActiveLab = (labId: string) => {
+    onSetActiveLab(labId);
+    const target = labs.find((l) => l.id === labId);
+    setActionNotice(`Active lab switched to "${target?.name}". All student test sessions are now associated with this lab.`);
+    setTimeout(() => setActionNotice(null), 5000);
   };
 
   const handleAddProhibitedRule = () => {
@@ -174,6 +194,22 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
 
   return (
     <div id="admin-lab-manager-page" className="space-y-8 animate-in fade-in duration-200">
+      {/* Action Notification Banner */}
+      {actionNotice && (
+        <div className="p-3.5 bg-blue-50 border border-blue-200 text-blue-900 rounded-xl text-xs font-semibold flex items-center justify-between shadow-xs animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+            <span>{actionNotice}</span>
+          </div>
+          <button
+            onClick={() => setActionNotice(null)}
+            className="text-blue-600 hover:text-blue-800 font-bold px-2 py-0.5"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Top Banner / Heading */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-slate-900 to-indigo-950 p-6 sm:p-8 rounded-2xl text-white shadow-sm">
         <div className="space-y-2">
@@ -496,7 +532,8 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
             <table className="w-full text-left text-xs sm:text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                  <th className="py-3 px-4">Student</th>
+                  <th className="py-3 px-4">Enrolled Candidate</th>
+                  <th className="py-3 px-4">Live Examination Status</th>
                   <th className="py-3 px-4">Time in Lab / Duration</th>
                   <th className="py-3 px-4">Attention Score</th>
                   <th className="py-3 px-4">Distractions vs Max</th>
@@ -510,6 +547,11 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
                   const maxAllowed = activeLab.maxDistractionsAllowed;
                   const ratio = student.distractionCount / maxAllowed;
                   const durationProgress = Math.min(100, Math.round((student.timeSpentSec / (activeLab.durationMinutes * 60)) * 100));
+                  const isCurrentLoggedUser =
+                    student.isCurrentUser ||
+                    student.studentEmail === currentUser?.email ||
+                    student.studentId === currentUser?.id ||
+                    (currentUser?.roleType === 'student' && student.studentName.toLowerCase().includes('alex'));
 
                   const statusBadge =
                     student.complianceStatus === 'compliant' ? (
@@ -534,22 +576,63 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
                   return (
                     <tr
                       key={student.studentId}
-                      className="hover:bg-slate-50 transition-colors"
+                      className={`transition-colors ${
+                        isCurrentLoggedUser ? 'bg-blue-50/40 hover:bg-blue-50/70' : 'hover:bg-slate-50'
+                      }`}
                     >
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 text-white ${
+                            isCurrentLoggedUser ? 'bg-blue-600 ring-2 ring-blue-400' : 'bg-gradient-to-tr from-slate-700 to-slate-900'
+                          }`}>
                             {student.studentName.charAt(0)}
                           </div>
                           <div className="min-w-0">
-                            <span className="font-bold text-slate-900 block truncate">
-                              {student.studentName}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-bold text-slate-900 truncate">
+                                {student.studentName}
+                              </span>
+                              {isCurrentLoggedUser && (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-600 text-white uppercase tracking-wider flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                  YOU (ONLINE)
+                                </span>
+                              )}
+                            </div>
                             <span className="text-[11px] text-slate-400 block truncate">
                               {student.studentEmail}
                             </span>
                           </div>
                         </div>
+                      </td>
+
+                      {/* Live Examination Status */}
+                      <td className="py-3.5 px-4">
+                        {student.testStatus === 'submitted' ? (
+                          <div className="space-y-0.5">
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-300 flex items-center gap-1 w-fit">
+                              <Award className="w-3 h-3 text-emerald-600" />
+                              <span>Score: {student.testScore}/{student.testTotalPoints || 100}</span>
+                            </span>
+                            <span className="text-[10px] text-slate-500 block">
+                              Finalized • All answers audited
+                            </span>
+                          </div>
+                        ) : student.testStatus === 'in_progress' ? (
+                          <div className="space-y-0.5">
+                            <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold text-[11px] border border-blue-300 flex items-center gap-1 w-fit">
+                              <Send className="w-3 h-3 text-blue-600" />
+                              <span>In Progress ({student.testAnswersCount || 0} solved)</span>
+                            </span>
+                            <span className="text-[10px] text-slate-500 block">
+                              Actively testing in live proctor
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400 font-medium italic">
+                            Awaiting start
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4">
@@ -711,6 +794,37 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
                   </div>
                 ) : (
                   <p className="text-slate-400 italic">No warning events logged yet.</p>
+                )}
+              </div>
+
+              {/* Live Examination Submission Audit */}
+              <div className="pt-2 border-t border-slate-100">
+                <h4 className="font-bold text-slate-900 mb-2 flex items-center gap-1.5">
+                  <Award className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Live Practical Examination Results</span>
+                </h4>
+                {selectedStudent.testStatus === 'submitted' ? (
+                  <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-emerald-950">
+                        Total Score: {selectedStudent.testScore} / {selectedStudent.testTotalPoints || 100} Points
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-bold text-[10px]">
+                        CERTIFIED SUBMISSION
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-emerald-800">
+                      All questions answered and recorded with Edge AI proctor integrity certificate.
+                    </p>
+                  </div>
+                ) : selectedStudent.testStatus === 'in_progress' ? (
+                  <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl">
+                    <span className="font-semibold text-blue-900 block">
+                      Candidate is actively answering the exam ({selectedStudent.testAnswersCount || 0} questions saved).
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-slate-400 italic">Candidate has not yet submitted an examination paper.</p>
                 )}
               </div>
             </div>

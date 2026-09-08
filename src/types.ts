@@ -32,6 +32,29 @@ export interface WarningPolicyConfig {
   };
 }
 
+export type TestQuestionType = 'multiple_choice' | 'code_snippet' | 'short_answer';
+
+export interface LabTestQuestion {
+  id: string;
+  questionText: string;
+  type: TestQuestionType;
+  options?: string[]; // for multiple choice
+  correctOptionIndex?: number;
+  starterCode?: string; // for coding questions
+  points: number;
+  category: string;
+  explanation?: string;
+}
+
+export interface StudentTestAnswer {
+  questionId: string;
+  selectedOption?: number;
+  textAnswer?: string;
+  codeAnswer?: string;
+  isAnswered: boolean;
+  isFlaggedForReview?: boolean;
+}
+
 export interface LabSessionConfig {
   id: string;
   name: string;
@@ -50,6 +73,7 @@ export interface LabSessionConfig {
   minTargetAttentionScore: number; // Target proxy e.g. 70%
   isActive: boolean;
   createdAt: string;
+  questions?: LabTestQuestion[]; // Practical questions for the live test
 }
 
 export interface WarningResponseRecord {
@@ -76,6 +100,15 @@ export interface StudentLabStatus {
   complianceStatus: 'compliant' | 'warning' | 'probation_exceeded';
   isCurrentlyOnline: boolean;
   lastActive: string;
+  // Associated Live Test Progress & Submission
+  testStatus?: 'not_started' | 'in_progress' | 'submitted';
+  testScore?: number;
+  testTotalPoints?: number;
+  testQuestionsCount?: number;
+  testAnswersCount?: number;
+  testSubmittedAt?: string;
+  studentAnswers?: Record<string, StudentTestAnswer>;
+  isCurrentUser?: boolean;
 }
 
 export type GazeDirection = 'forward' | 'away_left' | 'away_right' | 'away_up' | 'away_down';

@@ -29,6 +29,12 @@ import {
   BellRing,
   X,
   Check,
+  FileText,
+  ChevronDown,
+  ChevronUp,
+  Award,
+  PenTool,
+  HelpCircle,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -50,11 +56,16 @@ import {
   PomodoroConfig,
   LabSessionConfig,
   WarningResponseRecord,
+  User,
+  StudentTestAnswer,
+  LabTestQuestion,
 } from '../types';
+import { DEFAULT_LABS } from '../data/defaultLabs';
 import { AttentionCVEngine, DEFAULT_WEIGHTS } from '../lib/cvEngine';
 import { MotionSparkline } from '../components/MotionSparkline';
 import { CalibrationStep } from '../components/CalibrationStep';
 import { DistractionDisputeModal } from '../components/UIComponents';
+import { LabTestExamWorkspace } from '../components/LabTestExamWorkspace';
 
 interface LiveSessionPageProps {
   weights: AttentionWeightsConfig;
@@ -62,6 +73,15 @@ interface LiveSessionPageProps {
   onOpenSettings: () => void;
   activeLab?: LabSessionConfig;
   onRecordWarningResponse?: (record: WarningResponseRecord) => void;
+  user?: User | null;
+  onUpdateTestProgress?: (progress: {
+    testStatus: 'in_progress' | 'submitted';
+    testScore?: number;
+    testTotalPoints?: number;
+    testQuestionsCount?: number;
+    testAnswersCount?: number;
+    studentAnswers?: Record<string, StudentTestAnswer>;
+  }) => void;
 }
 
 export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
@@ -70,6 +90,8 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
   onOpenSettings,
   activeLab,
   onRecordWarningResponse,
+  user,
+  onUpdateTestProgress,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -106,6 +128,45 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
   const [pomodoroPhase, setPomodoroPhase] = useState<'work' | 'break'>('work');
   const [pomodoroPhaseRemainingSec, setPomodoroPhaseRemainingSec] = useState<number>(20 * 60);
   const [showPomodoroConfigModal, setShowPomodoroConfigModal] = useState<boolean>(false);
+
+  // Deep Telemetry expandable state & Workspace Mode
+  const [showDeepTelemetry, setShowDeepTelemetry] = useState<boolean>(false);
+  const [workspaceView, setWorkspaceView] = useState<'exam_test' | 'telemetry_diagnostics'>('exam_test');
+
+  // Compute effective practical test questions from active lab
+  const effectiveQuestions: LabTestQuestion[] =
+    activeLab?.questions && activeLab.questions.length > 0
+      ? activeLab.questions
+      : DEFAULT_LABS.find((l) => l.id === activeLab?.id)?.questions || DEFAULT_LABS[0].questions;
+
+  const handleTestSubmitted = (result: {
+    score: number;
+    totalPoints: number;
+    answers: Record<string, StudentTestAnswer>;
+  }) => {
+    if (onUpdateTestProgress) {
+      onUpdateTestProgress({
+        testStatus: 'submitted',
+        testScore: result.score,
+        testTotalPoints: result.totalPoints,
+        testQuestionsCount: effectiveQuestions.length,
+        testAnswersCount: Object.keys(result.answers).length,
+        studentAnswers: result.answers,
+      });
+    }
+  };
+
+  const handleAnswerChange = (answers: Record<string, StudentTestAnswer>) => {
+    if (onUpdateTestProgress) {
+      onUpdateTestProgress({
+        testStatus: 'in_progress',
+        testTotalPoints: 100,
+        testQuestionsCount: effectiveQuestions.length,
+        testAnswersCount: Object.keys(answers).length,
+        studentAnswers: answers,
+      });
+    }
+  };
 
   // Live Telemetry state
   const [latestFrame, setLatestFrame] = useState<CVTelemetryFrame>({
@@ -722,14 +783,19 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                   {activeLab.name}
                 </span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 uppercase">
-                  {activeLab.courseCode}
+                  {activeLab.code || 'LAB-ACT'}
                 </span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                  {activeLab.durationHours} hrs total
+                  {activeLab.durationHours} hrs ({activeLab.durationMinutes}m)
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Active Lab Session
                 </span>
               </div>
               <p className="text-xs text-slate-500 truncate mt-0.5">
-                Instructor: {activeLab.instructor} • Max Allowed Distractions: {activeLab.maxDistractionsAllowed} strikes
+                Instructor: <span className="font-medium text-slate-700">{activeLab.instructorName || 'Dr. Aris Vance'}</span> • Candidate:{' '}
+                <span className="font-semibold text-slate-900">{user?.name || 'Alex Rivera'}</span> ({user?.email || 'student@university.edu'})
               </p>
             </div>
           </div>
@@ -780,11 +846,59 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
               className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <Info className="w-4 h-4 text-indigo-600" />
-              <span>Lab Prohibitions ({activeLab.prohibitedBehaviors.length})</span>
+              <span>Lab Prohibitions ({activeLab.prohibitedBehaviors?.length || 0})</span>
             </button>
           </div>
         </div>
       )}
+
+      {/* Dual Mode Switcher Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold shrink-0">
+            {workspaceView === 'exam_test' ? <FileText className="w-4 h-4" /> : <Activity className="w-4 h-4 text-indigo-600" />}
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-bold text-slate-900 truncate">
+              {workspaceView === 'exam_test' ? 'Live Practical Examination & Edge Proctor Workspace' : 'Academic CV Signal Telemetry & Diagnostics HUD'}
+            </div>
+            <div className="text-[11px] text-slate-500 truncate">
+              {workspaceView === 'exam_test'
+                ? `Solve questions on the left while Edge AI continuously proctors your camera on the right`
+                : 'Showing 60s eye aspect ratio, head orientation, blink frequencies & sensor sparklines'}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <button
+              id="view-btn-exam-test"
+              onClick={() => setWorkspaceView('exam_test')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                workspaceView === 'exam_test'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Live Test Paper ({effectiveQuestions.length} Qs)</span>
+            </button>
+            <button
+              id="view-btn-telemetry"
+              onClick={() => setWorkspaceView('telemetry_diagnostics')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                workspaceView === 'telemetry_diagnostics'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Full Signal HUD</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Top Banner: Mode Selection & Privacy Enforcement */}
       <div
@@ -1095,10 +1209,46 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
         </div>
       )}
 
-      {/* Main Live Workspace Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Live Edge CV Video Stream & HUD (8 cols) */}
-        <div className="lg:col-span-8 flex flex-col gap-4">
+      {/* Main Dual Live Workspace Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left Column: Interactive Exam Test Paper or Diagnostics HUD (7 cols) */}
+        <div className="lg:col-span-7 flex flex-col gap-6 order-2 lg:order-1">
+          {workspaceView === 'exam_test' ? (
+            <LabTestExamWorkspace
+              questions={effectiveQuestions}
+              activeLab={activeLab || DEFAULT_LABS[0]}
+              user={user}
+              remainingSec={Math.max(0, (activeLab?.durationMinutes || 120) * 60 - elapsedSec)}
+              distractionStrikes={statsRef.current.completedEvents.length}
+              maxDistractionsAllowed={activeLab?.maxDistractionsAllowed || 5}
+              onTestSubmitted={handleTestSubmitted}
+              onAnswerChange={handleAnswerChange}
+            />
+          ) : (
+            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <FileText className="w-5 h-5 text-blue-600 shrink-0" />
+                <div>
+                  <h4 className="text-xs font-bold text-blue-900">
+                    Viewing Academic Telemetry & Signal Diagnostics
+                  </h4>
+                  <p className="text-[11px] text-blue-700">
+                    Switch back to the exam paper whenever you want to answer questions.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setWorkspaceView('exam_test')}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer whitespace-nowrap"
+              >
+                Return to Test Paper
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Right Column: Live Edge CV Video Stream & Proctoring Gauges (5 cols) */}
+        <div className="lg:col-span-5 flex flex-col gap-4 order-1 lg:order-2">
           <div
             id="camera-viewport-card"
             className="relative bg-slate-950 rounded-2xl overflow-hidden border border-[#E2E8F0] shadow-sm aspect-4/3 flex items-center justify-center"
@@ -1473,10 +1623,7 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
               </button>
             </div>
           </div>
-        </div>
 
-        {/* Right Column: Attention Proxy Score, Timeline Chart, Live Distraction Log (4 cols) */}
-        <div className="lg:col-span-4 flex flex-col gap-6">
           {/* Card 1: Attention Proxy Score Gauge */}
           <div
             id="live-attention-card"
@@ -1499,11 +1646,31 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
               </span>
             </div>
 
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-5xl font-bold text-[#0F172A] tracking-tight">
-                {latestFrame.attention_score.toFixed(1)}
-              </span>
-              <span className="text-xl font-semibold text-[#64748B]">/ 100</span>
+            <div className="flex items-baseline justify-between">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-4xl font-bold text-[#0F172A] tracking-tight">
+                  {latestFrame.attention_score.toFixed(1)}
+                </span>
+                <span className="text-lg font-semibold text-[#64748B]">/ 100</span>
+              </div>
+              {activeLab && (
+                <div className="text-right">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">
+                    Strikes vs Quota
+                  </span>
+                  <span
+                    className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
+                      statsRef.current.completedEvents.length >= activeLab.maxDistractionsAllowed
+                        ? 'bg-red-100 text-red-700'
+                        : statsRef.current.completedEvents.length > 0
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-emerald-100 text-emerald-800'
+                    }`}
+                  >
+                    {statsRef.current.completedEvents.length} / {activeLab.maxDistractionsAllowed} strikes
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Score Progress Fill Bar */}
@@ -1816,8 +1983,14 @@ export const LiveSessionPage: React.FC<LiveSessionPageProps> = ({
                         {idx + 1}
                       </span>
                       <div>
-                        <span className="font-semibold block">{item.name}</span>
-                        <span className="text-[11px] text-red-700 block mt-0.5">{item.description}</span>
+                        <span className="font-semibold block">
+                          {typeof item === 'string' ? item : (item as { name?: string }).name}
+                        </span>
+                        {typeof item !== 'string' && (item as { description?: string }).description && (
+                          <span className="text-[11px] text-red-700 block mt-0.5">
+                            {(item as { description?: string }).description}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}

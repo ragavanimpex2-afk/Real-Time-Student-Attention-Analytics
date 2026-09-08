@@ -7,6 +7,7 @@ import {
   LabSessionConfig,
   StudentLabStatus,
   WarningResponseRecord,
+  StudentTestAnswer,
 } from './types';
 import { DEFAULT_WEIGHTS } from './lib/cvEngine';
 import { DEFAULT_LABS, INITIAL_STUDENT_ROSTER } from './data/defaultLabs';
@@ -156,25 +157,75 @@ export default function App() {
     }
   };
 
+  const handleSetActiveLab = (labId: string) => {
+    setActiveLabId(labId);
+    setLabs((prevLabs) => {
+      const updated = prevLabs.map((l) => ({
+        ...l,
+        isActive: l.id === labId,
+      }));
+      try {
+        localStorage.setItem('admin_lab_configs', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Could not save lab configs:', e);
+      }
+      return updated;
+    });
+  };
+
   // Sync student roster when a student responds to an on-screen warning
   const handleRecordWarningResponse = (record: WarningResponseRecord) => {
     setStudentRoster((prev) =>
       prev.map((student) => {
         // Match active student (defaulting to Alex Rivera or user id)
         const isCurrentStudent =
-          student.id === user?.id ||
-          student.name.toLowerCase().includes('alex') ||
+          student.studentId === user?.id ||
+          student.studentEmail === user?.email ||
+          student.studentName.toLowerCase().includes('alex') ||
           student.studentId === 'STU-48201';
 
         if (isCurrentStudent) {
-          const updatedStrikes = student.distractionStrikesCount + 1;
+          const updatedStrikes = student.distractionCount + 1;
           const isWarningExceeded = updatedStrikes >= (activeLab?.maxDistractionsAllowed || 5);
           return {
             ...student,
-            distractionStrikesCount: updatedStrikes,
+            distractionCount: updatedStrikes,
             lastWarningResponseStatus: record.responseStatus,
-            warningResponseLog: [record, ...student.warningResponseLog],
-            complianceStatus: isWarningExceeded ? 'probation' : 'compliant',
+            warningResponses: [record, ...student.warningResponses],
+            complianceStatus: isWarningExceeded ? 'probation_exceeded' : student.complianceStatus,
+          };
+        }
+        return student;
+      })
+    );
+  };
+
+  // Update student test examination status in the live roster
+  const handleUpdateTestProgress = (progress: {
+    testStatus: 'in_progress' | 'submitted';
+    testScore?: number;
+    testTotalPoints?: number;
+    testQuestionsCount?: number;
+    testAnswersCount?: number;
+    studentAnswers?: Record<string, StudentTestAnswer>;
+  }) => {
+    setStudentRoster((prev) =>
+      prev.map((student) => {
+        const isCurrentStudent =
+          student.studentId === user?.id ||
+          student.studentEmail === user?.email ||
+          student.studentName.toLowerCase().includes('alex') ||
+          student.studentId === 'STU-48201';
+
+        if (isCurrentStudent) {
+          return {
+            ...student,
+            testStatus: progress.testStatus,
+            testScore: progress.testScore ?? student.testScore,
+            testTotalPoints: progress.testTotalPoints ?? student.testTotalPoints ?? 100,
+            testQuestionsCount: progress.testQuestionsCount ?? student.testQuestionsCount,
+            testAnswersCount: progress.testAnswersCount ?? student.testAnswersCount,
+            studentAnswers: progress.studentAnswers ?? student.studentAnswers,
           };
         }
         return student;
@@ -362,8 +413,9 @@ export default function App() {
               labs={labs}
               onUpdateLabs={handleUpdateLabs}
               activeLab={activeLab}
-              onSetActiveLab={(lab) => setActiveLabId(lab.id)}
+              onSetActiveLab={handleSetActiveLab}
               studentRoster={studentRoster}
+              currentUser={user}
             />
           )}
 
@@ -382,6 +434,8 @@ export default function App() {
               onOpenSettings={() => setIsSettingsOpen(true)}
               activeLab={activeLab}
               onRecordWarningResponse={handleRecordWarningResponse}
+              user={user}
+              onUpdateTestProgress={handleUpdateTestProgress}
             />
           )}
 
