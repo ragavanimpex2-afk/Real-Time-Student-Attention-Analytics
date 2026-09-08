@@ -3,6 +3,7 @@ import {
   Building2,
   Clock,
   ShieldAlert,
+  ShieldCheck,
   AlertTriangle,
   CheckCircle2,
   XCircle,
@@ -21,6 +22,13 @@ import {
   Sparkles,
   Send,
   Award,
+  Megaphone,
+  Pause,
+  Play,
+  RotateCcw,
+  Layers,
+  Activity,
+  Filter,
 } from 'lucide-react';
 import { LabSessionConfig, StudentLabStatus, WarningResponseMode, User } from '../types';
 
@@ -48,6 +56,16 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
   const [selectedStudent, setSelectedStudent] = useState<StudentLabStatus | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'compliant' | 'warning' | 'probation_exceeded'>('all');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+
+  // Sub-view toggle to clear State Confusion (Configuration vs. Live Proctoring)
+  const [activeSubView, setActiveSubView] = useState<'templates' | 'live_oversight'>('templates');
+
+  // Interactive Quick Action modals
+  const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [isLabPaused, setIsLabPaused] = useState(false);
+  const [labToDeleteConfirm, setLabToDeleteConfirm] = useState<LabSessionConfig | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   // New/Edit Lab Form State
   const [formName, setFormName] = useState('');
@@ -150,23 +168,63 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
     setIsCreateModalOpen(false);
   };
 
-  const handleDeleteLab = (labId: string) => {
+  const promptDeleteLab = (labId: string) => {
     if (labs.length <= 1) {
       alert('You must keep at least one active lab configuration in the system.');
       return;
     }
     const labToDelete = labs.find((l) => l.id === labId);
-    if (!window.confirm(`Are you sure you want to remove the lab "${labToDelete?.name || 'Lab'}"? Enrolled students will be re-routed to the remaining active lab.`)) {
-      return;
+    if (labToDelete) {
+      setLabToDeleteConfirm(labToDelete);
+      setDeleteConfirmText('');
     }
+  };
+
+  const handleExecuteSafeDelete = () => {
+    if (!labToDeleteConfirm || deleteConfirmText !== 'CONFIRM') return;
+    const labId = labToDeleteConfirm.id;
+    const labName = labToDeleteConfirm.name;
     const updated = labs.filter((l) => l.id !== labId);
     onUpdateLabs(updated);
     if (activeLab.id === labId && updated.length > 0) {
       onSetActiveLab(updated[0].id);
-      setActionNotice(`Removed "${labToDelete?.name}". Active lab switched to "${updated[0].name}".`);
+      setActionNotice(`Permanently deleted "${labName}". Active lab switched to "${updated[0].name}".`);
     } else {
-      setActionNotice(`Removed "${labToDelete?.name}" successfully.`);
+      setActionNotice(`Permanently deleted "${labName}" from templates.`);
     }
+    setLabToDeleteConfirm(null);
+    setDeleteConfirmText('');
+    setTimeout(() => setActionNotice(null), 5000);
+  };
+
+  const handleSendBroadcast = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!broadcastMessage.trim()) return;
+    setActionNotice(`Broadcast announcement sent to ${studentRoster.length} student workstations: "${broadcastMessage}"`);
+    setIsBroadcastModalOpen(false);
+    setBroadcastMessage('');
+    setTimeout(() => setActionNotice(null), 6000);
+  };
+
+  const handleTogglePause = () => {
+    setIsLabPaused((prev) => {
+      const next = !prev;
+      setActionNotice(
+        next
+          ? 'Lab Assessment PAUSED: Student exam timers and distraction counters are temporarily frozen.'
+          : 'Lab Assessment RESUMED: Live proctoring and student timers are active.'
+      );
+      setTimeout(() => setActionNotice(null), 5000);
+      return next;
+    });
+  };
+
+  const handleExtendGracePeriod = () => {
+    const updated = labs.map((l) =>
+      l.id === activeLab.id ? { ...l, distractionGracePeriodSec: l.distractionGracePeriodSec + 5 } : l
+    );
+    onUpdateLabs(updated);
+    setActionNotice(`Grace period extended by +5s for "${activeLab.name}" (now ${activeLab.distractionGracePeriodSec + 5} seconds buffer).`);
     setTimeout(() => setActionNotice(null), 5000);
   };
 
@@ -187,7 +245,20 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
     setFormProhibited(formProhibited.filter((_, i) => i !== index));
   };
 
-  const filteredRoster = studentRoster.filter((s) => {
+  // Status-Driven Sorting: Sort students dynamically so those with highest strikes, warnings, or probation float to top
+  const sortedRoster = [...studentRoster].sort((a, b) => {
+    const priority = (s: StudentLabStatus) => {
+      if (s.complianceStatus === 'probation_exceeded') return 300;
+      if (s.complianceStatus === 'warning') return 200;
+      if (s.distractionCount > 0) return 100 + s.distractionCount * 5;
+      return 0;
+    };
+    const diff = priority(b) - priority(a);
+    if (diff !== 0) return diff;
+    return a.currentAttentionScore - b.currentAttentionScore;
+  });
+
+  const filteredRoster = sortedRoster.filter((s) => {
     if (statusFilter === 'all') return true;
     return s.complianceStatus === statusFilter;
   });
@@ -218,517 +289,681 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
               <Building2 className="w-3.5 h-3.5" />
               <span>LAB COORDINATOR ADMIN PORTAL</span>
             </span>
-            <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[11px] font-bold border border-emerald-400/30">
-              LIVE SUPERVISION
+            <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[11px] font-bold border border-emerald-400/30 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              {isLabPaused ? 'ASSESSMENT PAUSED' : 'LIVE SUPERVISION ACTIVE'}
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
             Lab Configuration & Oversight
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-            Configure lab schedules, duration hours, rules & prohibitions ("What should NOT be done"), maximum distraction limits, and warning response behaviors for all enrolled student sessions.
+            Configure lab schedules, duration hours, rules & policy guidelines ("What should NOT be done"), maximum distraction limits, and warning response behaviors for all enrolled student sessions.
           </p>
         </div>
 
-        <button
-          id="btn-admin-create-lab"
-          onClick={openCreateModal}
-          className="self-start sm:self-center px-4 py-3 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Create New Lab</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            id="btn-admin-broadcast-top"
+            onClick={() => setIsBroadcastModalOpen(true)}
+            className="px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold rounded-xl border border-white/20 transition-all flex items-center gap-1.5 cursor-pointer"
+          >
+            <Megaphone className="w-4 h-4 text-blue-300" />
+            <span className="hidden sm:inline">Broadcast Announcement</span>
+            <span className="sm:hidden">Broadcast</span>
+          </button>
+          <button
+            id="btn-admin-create-lab"
+            onClick={openCreateModal}
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Lab</span>
+          </button>
+        </div>
       </div>
 
-      {/* Currently Active Lab Hero Card */}
-      <div
-        id="active-lab-hero-card"
-        className="bg-white rounded-2xl border-2 border-blue-600/30 p-6 shadow-xs relative overflow-hidden"
-      >
-        <div className="absolute top-0 right-0 px-4 py-1.5 bg-blue-600 text-white text-[11px] font-bold uppercase tracking-wider rounded-bl-xl flex items-center gap-1.5">
-          <Radio className="w-3.5 h-3.5 animate-pulse" />
-          <span>CURRENTLY ASSIGNED TO STUDENTS</span>
+      {/* Segmented Sub-View Switcher: Solves State Confusion (Configuration vs. Live Proctoring) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+        <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl self-start">
+          <button
+            id="tab-subview-templates"
+            onClick={() => setActiveSubView('templates')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              activeSubView === 'templates'
+                ? 'bg-white text-slate-900 shadow-xs ring-1 ring-slate-200'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Layers className="w-4 h-4 text-blue-600" />
+            <span>Lab Templates & Policy Rules ({labs.length})</span>
+          </button>
+          <button
+            id="tab-subview-live-oversight"
+            onClick={() => setActiveSubView('live_oversight')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              activeSubView === 'live_oversight'
+                ? 'bg-white text-slate-900 shadow-xs ring-1 ring-slate-200'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Users className="w-4 h-4 text-blue-600" />
+            <span>Live Proctor Oversight & Roster ({studentRoster.length})</span>
+            {studentRoster.some((s) => s.complianceStatus !== 'compliant') && (
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+            )}
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-4">
-            <div>
-              <span className="text-xs font-mono font-bold text-blue-600 uppercase tracking-wider">
-                {activeLab.code} • {activeLab.cohortClass}
-              </span>
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 mt-0.5">
-                {activeLab.name}
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-600 mt-1">
-                {activeLab.description}
-              </p>
+        {/* Global Toolbar Quick Controls */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleTogglePause}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-xl border transition-all flex items-center gap-1.5 cursor-pointer ${
+              isLabPaused
+                ? 'bg-amber-50 border-amber-300 text-amber-900'
+                : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-800 shadow-2xs'
+            }`}
+          >
+            {isLabPaused ? <Play className="w-3.5 h-3.5 text-emerald-600" /> : <Pause className="w-3.5 h-3.5 text-amber-600" />}
+            <span>{isLabPaused ? 'Resume Lab Assessment' : 'Pause Assessment'}</span>
+          </button>
+          <button
+            onClick={handleExtendGracePeriod}
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 text-xs font-semibold rounded-xl shadow-2xs flex items-center gap-1.5 cursor-pointer"
+          >
+            <Clock className="w-3.5 h-3.5 text-blue-600" />
+            <span>+5s Grace Buffer</span>
+          </button>
+        </div>
+      </div>
+
+      {/* VIEW 1: LAB TEMPLATES & POLICY CONFIGURATION */}
+      {activeSubView === 'templates' && (
+        <div className="space-y-8 animate-in fade-in duration-200">
+          {/* Currently Active Lab Hero Card */}
+          <div
+            id="active-lab-hero-card"
+            className="bg-white rounded-2xl border-2 border-blue-600/30 p-6 shadow-xs relative overflow-hidden"
+          >
+            <div className="absolute top-0 right-0 px-4 py-1.5 bg-blue-600 text-white text-[11px] font-bold uppercase tracking-wider rounded-bl-xl flex items-center gap-1.5">
+              <Radio className="w-3.5 h-3.5 animate-pulse" />
+              <span>CURRENTLY ASSIGNED TO STUDENTS</span>
             </div>
 
-            {/* Key Lab Parameters Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                  LAB DURATION
-                </span>
-                <span className="text-base sm:text-lg font-bold text-slate-900">
-                  {activeLab.durationHours} Hours
-                </span>
-                <span className="text-[11px] text-slate-500 block">
-                  ({activeLab.durationMinutes} minutes)
-                </span>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 space-y-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="px-2.5 py-0.5 rounded-md text-xs font-mono font-bold text-slate-900 bg-slate-100 border border-slate-300">
+                      {activeLab.code}
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-md text-xs font-bold text-blue-950 bg-blue-100 border border-blue-200">
+                      {activeLab.cohortClass}
+                    </span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-bold text-slate-900 mt-0.5">
+                    {activeLab.name}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-600 mt-1">
+                    {activeLab.description}
+                  </p>
+                </div>
+
+                {/* Key Lab Parameters Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                      LAB DURATION
+                    </span>
+                    <span className="text-base sm:text-lg font-bold text-slate-900">
+                      {activeLab.durationHours} Hours
+                    </span>
+                    <span className="text-[11px] text-slate-500 block">
+                      ({activeLab.durationMinutes} minutes)
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                      MAX DISTRACTIONS
+                    </span>
+                    <span className="text-base sm:text-lg font-bold text-slate-900">
+                      {activeLab.maxDistractionsAllowed} Strikes
+                    </span>
+                    <span className="text-[11px] text-slate-500 block">Before probation</span>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                      WARNING RESPONSE
+                    </span>
+                    <span className="text-xs font-bold text-slate-900 block mt-1 truncate" title="Student Acknowledgment Prompt (Pop-up Verification)">
+                      {activeLab.warningResponseMode === 'interactive_acknowledge'
+                        ? 'Pop-up Verification'
+                        : 'Audible Chime'}
+                    </span>
+                    <span className="text-[11px] text-slate-500 block">Required prompt</span>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                      AUDIO CHIME
+                    </span>
+                    <span className="text-base font-bold text-slate-900 flex items-center gap-1.5 mt-0.5">
+                      {activeLab.warningSoundEnabled ? (
+                        <>
+                          <Volume2 className="w-4 h-4 text-emerald-600" />
+                          <span className="text-emerald-700 text-xs">Enabled</span>
+                        </>
+                      ) : (
+                        <>
+                          <VolumeX className="w-4 h-4 text-slate-400" />
+                          <span className="text-slate-500 text-xs">Muted</span>
+                        </>
+                      )}
+                    </span>
+                    <span className="text-[11px] text-slate-500 block">On alert trigger</span>
+                  </div>
+                </div>
+
+                {/* Neutral Dark Slate Styling for Rules Card (Eliminating UI Alarm Fatigue from Static Rules) */}
+                <div className="p-5 bg-slate-900 text-slate-100 border border-slate-800 rounded-xl space-y-3 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-white font-bold text-xs">
+                      <ShieldCheck className="w-4 h-4 text-blue-400" />
+                      <span>EXAM CONDUCT POLICY & PROHIBITED ACTIONS:</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-mono">Enforced locally via Edge AI</span>
+                  </div>
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs text-slate-300">
+                    {activeLab.prohibitedBehaviors.map((rule, idx) => (
+                      <li key={idx} className="flex items-start gap-2 bg-slate-800/60 p-2 rounded-lg border border-slate-700/50">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0"></span>
+                        <span className="leading-relaxed">{rule}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
 
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                  MAX DISTRACTIONS
-                </span>
-                <span className="text-base sm:text-lg font-bold text-slate-900">
-                  {activeLab.maxDistractionsAllowed} Strikes
-                </span>
-                <span className="text-[11px] text-slate-500 block">Before probation</span>
-              </div>
+              {/* Functional Quick Actions Panel (No Empty Slop) */}
+              <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col justify-between space-y-4">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Active Lab Controls</span>
+                  </h3>
+                  <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+                    Control live session parameters, broadcast instructions to candidate workstations, or fine-tune distraction grace buffers.
+                  </p>
+                  <div className="space-y-2 text-xs text-slate-700 bg-white p-3 rounded-lg border border-slate-200">
+                    <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                      <span className="text-slate-500">Connected Candidates:</span>
+                      <span className="font-bold text-slate-900">
+                        {studentRoster.filter((s) => s.isCurrentlyOnline).length} Active Online
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                      <span className="text-slate-500">Distraction Buffer:</span>
+                      <span className="font-bold text-slate-900">{activeLab.distractionGracePeriodSec}s Grace</span>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                      <span className="text-slate-500">Target Score Proxy:</span>
+                      <span className="font-bold text-slate-900">{activeLab.minTargetAttentionScore}%</span>
+                    </div>
+                  </div>
+                </div>
 
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                  WARNING RESPONSE
-                </span>
-                <span className="text-xs font-bold text-blue-700 block mt-1 truncate">
-                  {activeLab.warningResponseMode === 'interactive_acknowledge'
-                    ? 'Interactive Click'
-                    : 'Audible Chime'}
-                </span>
-                <span className="text-[11px] text-slate-500 block">Required prompt</span>
+                <div className="space-y-2 pt-2">
+                  <button
+                    onClick={() => setIsBroadcastModalOpen(true)}
+                    className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <Megaphone className="w-3.5 h-3.5" />
+                    <span>Broadcast Class Notice</span>
+                  </button>
+                  <button
+                    onClick={handleTogglePause}
+                    className="w-full py-2 px-3 bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 text-xs font-semibold rounded-lg shadow-2xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  >
+                    {isLabPaused ? <Play className="w-3.5 h-3.5 text-emerald-600" /> : <Pause className="w-3.5 h-3.5 text-amber-600" />}
+                    <span>{isLabPaused ? 'Resume Assessment' : 'Pause Assessment'}</span>
+                  </button>
+                  <button
+                    onClick={() => openEditModal(activeLab)}
+                    className="w-full py-2 px-3 bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 text-xs font-semibold rounded-lg shadow-2xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <FileEdit className="w-3.5 h-3.5" />
+                    <span>Edit Lab Rules & Duration</span>
+                  </button>
+                </div>
               </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                  AUDIO CHIME
-                </span>
-                <span className="text-base font-bold text-slate-900 flex items-center gap-1.5 mt-0.5">
-                  {activeLab.warningSoundEnabled ? (
-                    <>
-                      <Volume2 className="w-4 h-4 text-emerald-600" />
-                      <span className="text-emerald-700 text-xs">Enabled</span>
-                    </>
-                  ) : (
-                    <>
-                      <VolumeX className="w-4 h-4 text-slate-400" />
-                      <span className="text-slate-500 text-xs">Muted</span>
-                    </>
-                  )}
-                </span>
-                <span className="text-[11px] text-slate-500 block">On alert trigger</span>
-              </div>
-            </div>
-
-            {/* Prohibitions Card: "What should NOT be done" */}
-            <div className="p-4 bg-red-50/70 border border-red-200 rounded-xl space-y-2">
-              <div className="flex items-center gap-2 text-red-900 font-bold text-xs">
-                <ShieldAlert className="w-4 h-4 text-red-600" />
-                <span>LAB PROHIBITIONS (WHAT SHOULD NOT BE DONE):</span>
-              </div>
-              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-red-800">
-                {activeLab.prohibitedBehaviors.map((rule, idx) => (
-                  <li key={idx} className="flex items-start gap-2">
-                    <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
-                    <span>{rule}</span>
-                  </li>
-                ))}
-              </ul>
             </div>
           </div>
 
-          {/* Right Action & Quick Edit */}
-          <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col justify-between space-y-4">
-            <div>
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2">
-                Active Lab Quick Actions
-              </h3>
-              <p className="text-xs text-slate-600 mb-4 leading-relaxed">
-                When students open the Live Session or sign in, they will immediately be bound to the rules, duration hours, and distraction warning limits of this lab.
-              </p>
-              <div className="space-y-2 text-xs text-slate-700">
-                <div className="flex items-center justify-between py-1 border-b border-slate-200">
-                  <span className="text-slate-500">Active Students:</span>
-                  <span className="font-bold text-slate-900">
-                    {studentRoster.filter((s) => s.isCurrentlyOnline).length} Online
-                  </span>
-                </div>
-                <div className="flex items-center justify-between py-1 border-b border-slate-200">
-                  <span className="text-slate-500">Grace Period:</span>
-                  <span className="font-bold text-slate-900">{activeLab.distractionGracePeriodSec}s</span>
-                </div>
-                <div className="flex items-center justify-between py-1">
-                  <span className="text-slate-500">Min Target Score:</span>
-                  <span className="font-bold text-slate-900">{activeLab.minTargetAttentionScore}%</span>
-                </div>
+          {/* All Available Lab Configurations */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">All Configured Lab Templates</h2>
+                <p className="text-xs text-slate-500">
+                  Select which lab template is currently assigned or configure course practicals.
+                </p>
+              </div>
+              <span className="text-xs text-slate-600 font-semibold bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
+                {labs.length} Labs Available
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {labs.map((lab) => {
+                const isCurrentlyActive = lab.id === activeLab.id;
+                return (
+                  <div
+                    key={lab.id}
+                    className={`bg-white rounded-xl border p-5 shadow-2xs flex flex-col justify-between transition-all ${
+                      isCurrentlyActive
+                        ? 'border-blue-600 ring-2 ring-blue-600/10'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <span className="text-[10px] font-mono font-bold text-slate-900 px-2 py-0.5 rounded bg-slate-100 border border-slate-200">
+                            {lab.code}
+                          </span>
+                          <h3 className="text-sm font-bold text-slate-900 mt-1.5 line-clamp-1">
+                            {lab.name}
+                          </h3>
+                        </div>
+                        {isCurrentlyActive && (
+                          <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-full uppercase shrink-0">
+                            ACTIVE
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-xs text-slate-500 line-clamp-2">{lab.description}</p>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                        <div className="p-2 bg-slate-50 rounded-lg">
+                          <span className="text-[10px] text-slate-400 block font-bold">DURATION</span>
+                          <span className="font-semibold text-slate-800">{lab.durationHours} Hours</span>
+                        </div>
+                        <div className="p-2 bg-slate-50 rounded-lg">
+                          <span className="text-[10px] text-slate-400 block font-bold">MAX STRIKES</span>
+                          <span className="font-semibold text-slate-800">{lab.maxDistractionsAllowed} Allowed</span>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-slate-700 bg-slate-50 p-2 rounded-lg border border-slate-200">
+                        <span className="font-bold text-slate-900">Conduct Rules: </span>
+                        <span>{lab.prohibitedBehaviors.length} policies registered</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-4 mt-2 border-t border-slate-100">
+                      {!isCurrentlyActive ? (
+                        <button
+                          onClick={() => onSetActiveLab(lab.id)}
+                          className="flex-1 py-1.5 px-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                        >
+                          Set As Active Lab
+                        </button>
+                      ) : (
+                        <span className="flex-1 text-center py-1.5 text-xs font-bold text-blue-600">
+                          Currently Assigned
+                        </span>
+                      )}
+                      <button
+                        onClick={() => openEditModal(lab)}
+                        title="Edit Lab"
+                        className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg cursor-pointer"
+                      >
+                        <FileEdit className="w-4 h-4" />
+                      </button>
+                      {labs.length > 1 && (
+                        <button
+                          onClick={() => promptDeleteLab(lab.id)}
+                          title="Delete Lab"
+                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW 2: LIVE PROCTOR OVERSIGHT & ROSTER */}
+      {activeSubView === 'live_oversight' && (
+        <div id="student-oversight-section" className="space-y-6 animate-in fade-in duration-200">
+          {/* Status KPI Overview Bar */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                CANDIDATES ONLINE
+              </span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-slate-900">
+                  {studentRoster.filter((s) => s.isCurrentlyOnline).length}
+                </span>
+                <span className="text-xs text-slate-500">/ {studentRoster.length} Total</span>
               </div>
             </div>
 
-            <div className="space-y-2 pt-2">
+            <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                AVERAGE FOCUS SCORE
+              </span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-emerald-600">
+                  {Math.round(
+                    studentRoster.reduce((acc, s) => acc + s.currentAttentionScore, 0) /
+                      (studentRoster.length || 1)
+                  )}%
+                </span>
+                <span className="text-xs text-emerald-700">Target ≥{activeLab.minTargetAttentionScore}%</span>
+              </div>
+            </div>
+
+            <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                NEARING STRIKE LIMIT
+              </span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-amber-600">
+                  {studentRoster.filter((s) => s.complianceStatus === 'warning').length}
+                </span>
+                <span className="text-xs text-slate-500">Need attention</span>
+              </div>
+            </div>
+
+            <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                PROBATION FLAGS
+              </span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-red-600">
+                  {studentRoster.filter((s) => s.complianceStatus === 'probation_exceeded').length}
+                </span>
+                <span className="text-xs text-red-700">Exceeded allowance</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-600" />
+                <span>Status-Driven Candidate Roster</span>
+              </h2>
+              <p className="text-xs text-slate-500">
+                Candidates requiring attention (exceeded probation or with warning strikes) automatically float to the top of the monitor.
+              </p>
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
               <button
-                onClick={() => openEditModal(activeLab)}
-                className="w-full py-2.5 px-3 bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 text-xs font-semibold rounded-lg shadow-2xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                onClick={() => setStatusFilter('all')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                  statusFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
               >
-                <FileEdit className="w-3.5 h-3.5" />
-                <span>Edit This Lab Rules & Duration</span>
+                All ({studentRoster.length})
+              </button>
+              <button
+                onClick={() => setStatusFilter('compliant')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                  statusFilter === 'compliant' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Compliant
+              </button>
+              <button
+                onClick={() => setStatusFilter('warning')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                  statusFilter === 'warning' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Warnings
+              </button>
+              <button
+                onClick={() => setStatusFilter('probation_exceeded')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                  statusFilter === 'probation_exceeded' ? 'bg-white text-red-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Exceeded
               </button>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* All Available Lab Configurations */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">All Configured Labs</h2>
-            <p className="text-xs text-slate-500">
-              Select which lab is active or configure new course practicals.
-            </p>
-          </div>
-          <span className="text-xs text-slate-500 font-medium">
-            {labs.length} Labs Available
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {labs.map((lab) => {
-            const isCurrentlyActive = lab.id === activeLab.id;
-            return (
-              <div
-                key={lab.id}
-                className={`bg-white rounded-xl border p-5 shadow-2xs flex flex-col justify-between transition-all ${
-                  isCurrentlyActive
-                    ? 'border-blue-600 ring-2 ring-blue-600/10'
-                    : 'border-slate-200 hover:border-slate-300'
-                }`}
-              >
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span className="text-[10px] font-mono font-bold text-blue-600 px-2 py-0.5 rounded bg-blue-50 border border-blue-100">
-                        {lab.code}
-                      </span>
-                      <h3 className="text-sm font-bold text-slate-900 mt-1.5 line-clamp-1">
-                        {lab.name}
-                      </h3>
-                    </div>
-                    {isCurrentlyActive && (
-                      <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-full uppercase shrink-0">
-                        ACTIVE
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-xs text-slate-500 line-clamp-2">{lab.description}</p>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                    <div className="p-2 bg-slate-50 rounded-lg">
-                      <span className="text-[10px] text-slate-400 block font-bold">DURATION</span>
-                      <span className="font-semibold text-slate-800">{lab.durationHours} Hours</span>
-                    </div>
-                    <div className="p-2 bg-slate-50 rounded-lg">
-                      <span className="text-[10px] text-slate-400 block font-bold">MAX STRIKES</span>
-                      <span className="font-semibold text-slate-800">{lab.maxDistractionsAllowed} Allowed</span>
-                    </div>
-                  </div>
-
-                  <div className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg">
-                    <span className="font-bold text-red-600">Prohibitions: </span>
-                    <span>{lab.prohibitedBehaviors.length} strict rules configured</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 pt-4 mt-2 border-t border-slate-100">
-                  {!isCurrentlyActive ? (
-                    <button
-                      onClick={() => onSetActiveLab(lab.id)}
-                      className="flex-1 py-1.5 px-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
-                    >
-                      Set As Active Lab
-                    </button>
-                  ) : (
-                    <span className="flex-1 text-center py-1.5 text-xs font-bold text-blue-600">
-                      Currently Assigned
-                    </span>
-                  )}
-                  <button
-                    onClick={() => openEditModal(lab)}
-                    title="Edit Lab"
-                    className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg cursor-pointer"
-                  >
-                    <FileEdit className="w-4 h-4" />
-                  </button>
-                  {labs.length > 1 && (
-                    <button
-                      onClick={() => handleDeleteLab(lab.id)}
-                      title="Delete Lab"
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Live Student Lab Oversight & Warning Response Monitor */}
-      <div id="student-oversight-section" className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Users className="w-5 h-5 text-blue-600" />
-              <span>Live Student Lab Oversight & Compliance Monitor</span>
-            </h2>
-            <p className="text-xs text-slate-500">
-              Track student duration, distraction strikes, and how they respond to warning alerts.
-            </p>
-          </div>
-
-          {/* Filter Pills */}
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
-            <button
-              onClick={() => setStatusFilter('all')}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-                statusFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              All ({studentRoster.length})
-            </button>
-            <button
-              onClick={() => setStatusFilter('compliant')}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-                statusFilter === 'compliant' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Compliant
-            </button>
-            <button
-              onClick={() => setStatusFilter('warning')}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-                statusFilter === 'warning' ? 'bg-white text-amber-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Warnings
-            </button>
-            <button
-              onClick={() => setStatusFilter('probation_exceeded')}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-                statusFilter === 'probation_exceeded' ? 'bg-white text-red-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Exceeded
-            </button>
-          </div>
-        </div>
-
-        {/* Oversight Table */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs sm:text-sm">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                  <th className="py-3 px-4">Enrolled Candidate</th>
-                  <th className="py-3 px-4">Live Examination Status</th>
-                  <th className="py-3 px-4">Time in Lab / Duration</th>
-                  <th className="py-3 px-4">Attention Score</th>
-                  <th className="py-3 px-4">Distractions vs Max</th>
-                  <th className="py-3 px-4">Warning Response ("How Responded")</th>
-                  <th className="py-3 px-4">Compliance Status</th>
-                  <th className="py-3 px-4 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredRoster.map((student) => {
-                  const maxAllowed = activeLab.maxDistractionsAllowed;
-                  const ratio = student.distractionCount / maxAllowed;
-                  const durationProgress = Math.min(100, Math.round((student.timeSpentSec / (activeLab.durationMinutes * 60)) * 100));
-                  const isCurrentLoggedUser =
-                    student.isCurrentUser ||
-                    student.studentEmail === currentUser?.email ||
-                    student.studentId === currentUser?.id ||
-                    (currentUser?.roleType === 'student' && student.studentName.toLowerCase().includes('alex'));
-
-                  const statusBadge =
-                    student.complianceStatus === 'compliant' ? (
-                      <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[11px] border border-emerald-200">
-                        COMPLIANT
-                      </span>
-                    ) : student.complianceStatus === 'warning' ? (
-                      <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 font-bold text-[11px] border border-amber-200 flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" />
-                        <span>NEARING LIMIT</span>
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-1 rounded-full bg-red-50 text-red-700 font-bold text-[11px] border border-red-200 flex items-center gap-1">
-                        <XCircle className="w-3 h-3" />
-                        <span>EXCEEDED PROBATION</span>
-                      </span>
+          {/* Status-Driven Oversight Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs sm:text-sm">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                    <th className="py-3 px-4">Enrolled Candidate</th>
+                    <th className="py-3 px-4">Live Examination Status</th>
+                    <th className="py-3 px-4">Time in Lab / Duration</th>
+                    <th className="py-3 px-4">Attention Score</th>
+                    <th className="py-3 px-4">Distractions vs Max</th>
+                    <th className="py-3 px-4">Student Acknowledgment Prompt Status</th>
+                    <th className="py-3 px-4">Compliance Status</th>
+                    <th className="py-3 px-4 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredRoster.map((student) => {
+                    const maxAllowed = activeLab.maxDistractionsAllowed;
+                    const durationProgress = Math.min(
+                      100,
+                      Math.round((student.timeSpentSec / (activeLab.durationMinutes * 60)) * 100)
                     );
+                    const isCurrentLoggedUser =
+                      student.isCurrentUser ||
+                      student.studentEmail === currentUser?.email ||
+                      student.studentId === currentUser?.id ||
+                      (currentUser?.roleType === 'student' &&
+                        student.studentName.toLowerCase().includes('alex'));
 
-                  const hoursSpent = Math.floor(student.timeSpentSec / 3600);
-                  const minsSpent = Math.floor((student.timeSpentSec % 3600) / 60);
-
-                  return (
-                    <tr
-                      key={student.studentId}
-                      className={`transition-colors ${
-                        isCurrentLoggedUser ? 'bg-blue-50/40 hover:bg-blue-50/70' : 'hover:bg-slate-50'
-                      }`}
-                    >
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-2.5">
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 text-white ${
-                            isCurrentLoggedUser ? 'bg-blue-600 ring-2 ring-blue-400' : 'bg-gradient-to-tr from-slate-700 to-slate-900'
-                          }`}>
-                            {student.studentName.charAt(0)}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-bold text-slate-900 truncate">
-                                {student.studentName}
-                              </span>
-                              {isCurrentLoggedUser && (
-                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-600 text-white uppercase tracking-wider flex items-center gap-1">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                                  YOU (ONLINE)
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-[11px] text-slate-400 block truncate">
-                              {student.studentEmail}
-                            </span>
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Live Examination Status */}
-                      <td className="py-3.5 px-4">
-                        {student.testStatus === 'submitted' ? (
-                          <div className="space-y-0.5">
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-300 flex items-center gap-1 w-fit">
-                              <Award className="w-3 h-3 text-emerald-600" />
-                              <span>Score: {student.testScore}/{student.testTotalPoints || 100}</span>
-                            </span>
-                            <span className="text-[10px] text-slate-500 block">
-                              Finalized • All answers audited
-                            </span>
-                          </div>
-                        ) : student.testStatus === 'in_progress' ? (
-                          <div className="space-y-0.5">
-                            <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold text-[11px] border border-blue-300 flex items-center gap-1 w-fit">
-                              <Send className="w-3 h-3 text-blue-600" />
-                              <span>In Progress ({student.testAnswersCount || 0} solved)</span>
-                            </span>
-                            <span className="text-[10px] text-slate-500 block">
-                              Actively testing in live proctor
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-400 font-medium italic">
-                            Awaiting start
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-                            <span>
-                              {hoursSpent > 0 ? `${hoursSpent}h ` : ''}{minsSpent}m
-                            </span>
-                            <span className="text-slate-400">/ {activeLab.durationHours}h</span>
-                          </div>
-                          <div className="w-28 bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                            <div
-                              className="bg-blue-600 h-full rounded-full transition-all"
-                              style={{ width: `${durationProgress}%` }}
-                            />
-                          </div>
-                        </div>
-                      </td>
-
-                      <td className="py-3.5 px-4 font-bold text-slate-900">
-                        <span
-                          className={`text-sm ${
-                            student.currentAttentionScore >= 75
-                              ? 'text-emerald-600'
-                              : student.currentAttentionScore >= 60
-                              ? 'text-amber-600'
-                              : 'text-red-600'
-                          }`}
-                        >
-                          {student.currentAttentionScore}%
+                    const statusBadge =
+                      student.complianceStatus === 'compliant' ? (
+                        <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[11px] border border-emerald-200">
+                          COMPLIANT
                         </span>
-                      </td>
+                      ) : student.complianceStatus === 'warning' ? (
+                        <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 font-bold text-[11px] border border-amber-200 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" />
+                          <span>NEARING LIMIT</span>
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full bg-red-50 text-red-700 font-bold text-[11px] border border-red-200 flex items-center gap-1">
+                          <XCircle className="w-3 h-3" />
+                          <span>EXCEEDED PROBATION</span>
+                        </span>
+                      );
 
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`font-bold text-xs px-2 py-0.5 rounded-md ${
-                              student.distractionCount >= maxAllowed
-                                ? 'bg-red-100 text-red-700 font-bold'
-                                : student.distractionCount >= maxAllowed - 1
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-slate-100 text-slate-700'
-                            }`}
-                          >
-                            {student.distractionCount} / {maxAllowed}
-                          </span>
-                        </div>
-                      </td>
+                    const hoursSpent = Math.floor(student.timeSpentSec / 3600);
+                    const minsSpent = Math.floor((student.timeSpentSec % 3600) / 60);
 
-                      <td className="py-3.5 px-4">
-                        {student.warningResponses.length > 0 ? (
-                          <div className="space-y-1 max-w-xs">
-                            {student.warningResponses.slice(-2).map((wr) => (
-                              <div
-                                key={wr.id}
-                                className="flex items-center gap-1.5 text-[11px]"
-                              >
-                                {wr.responseStatus === 'acknowledged' ? (
-                                  <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold flex items-center gap-1">
-                                    <Check className="w-3 h-3 text-emerald-600" />
-                                    <span>Ack ({wr.responseTimeSec}s)</span>
-                                  </span>
-                                ) : (
-                                  <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 font-semibold">
-                                    Ignored / Timeout
+                    return (
+                      <tr
+                        key={student.studentId}
+                        className={`transition-colors ${
+                          student.complianceStatus === 'probation_exceeded'
+                            ? 'bg-red-50/30 hover:bg-red-50/50'
+                            : isCurrentLoggedUser
+                            ? 'bg-blue-50/40 hover:bg-blue-50/70'
+                            : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-2.5">
+                            <div
+                              className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 text-white ${
+                                isCurrentLoggedUser
+                                  ? 'bg-blue-600 ring-2 ring-blue-400'
+                                  : student.complianceStatus === 'probation_exceeded'
+                                  ? 'bg-red-600'
+                                  : 'bg-gradient-to-tr from-slate-700 to-slate-900'
+                              }`}
+                            >
+                              {student.studentName.charAt(0)}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-slate-900 truncate">
+                                  {student.studentName}
+                                </span>
+                                {isCurrentLoggedUser && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-600 text-white uppercase tracking-wider flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                    YOU (ONLINE)
                                   </span>
                                 )}
-                                <span className="text-slate-500 truncate" title={wr.triggerReason}>
-                                  {wr.triggerReason}
-                                </span>
                               </div>
-                            ))}
+                              <span className="text-[11px] text-slate-400 block truncate">
+                                {student.studentEmail}
+                              </span>
+                            </div>
                           </div>
-                        ) : (
-                          <span className="text-xs text-slate-400 italic">No warnings issued</span>
-                        )}
-                      </td>
+                        </td>
 
-                      <td className="py-3.5 px-4">{statusBadge}</td>
+                        {/* Live Examination Status */}
+                        <td className="py-3.5 px-4">
+                          {student.testStatus === 'submitted' ? (
+                            <div className="space-y-0.5">
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-300 flex items-center gap-1 w-fit">
+                                <Award className="w-3 h-3 text-emerald-600" />
+                                <span>Score: {student.testScore}/{student.testTotalPoints || 100}</span>
+                              </span>
+                              <span className="text-[10px] text-slate-500 block">
+                                Finalized • All answers audited
+                              </span>
+                            </div>
+                          ) : student.testStatus === 'in_progress' ? (
+                            <div className="space-y-0.5">
+                              <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold text-[11px] border border-blue-300 flex items-center gap-1 w-fit">
+                                <Send className="w-3 h-3 text-blue-600" />
+                                <span>In Progress ({student.testAnswersCount || 0} solved)</span>
+                              </span>
+                              <span className="text-[10px] text-slate-500 block">
+                                Actively testing in live proctor
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400 font-medium italic">
+                              Awaiting start
+                            </span>
+                          )}
+                        </td>
 
-                      <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={() => setSelectedStudent(student)}
-                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-lg transition-colors cursor-pointer"
-                        >
-                          View Logs
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <td className="py-3.5 px-4">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                              <span>
+                                {hoursSpent > 0 ? `${hoursSpent}h ` : ''}{minsSpent}m
+                              </span>
+                              <span className="text-slate-400">/ {activeLab.durationHours}h</span>
+                            </div>
+                            <div className="w-28 bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                              <div
+                                className="bg-blue-600 h-full rounded-full transition-all"
+                                style={{ width: `${durationProgress}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4 font-bold text-slate-900">
+                          <span
+                            className={`text-sm ${
+                              student.currentAttentionScore >= 75
+                                ? 'text-emerald-600'
+                                : student.currentAttentionScore >= 60
+                                ? 'text-amber-600'
+                                : 'text-red-600'
+                            }`}
+                          >
+                            {student.currentAttentionScore}%
+                          </span>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`font-bold text-xs px-2 py-0.5 rounded-md ${
+                                student.distractionCount >= maxAllowed
+                                  ? 'bg-red-100 text-red-700 font-bold'
+                                  : student.distractionCount >= maxAllowed - 1
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {student.distractionCount} / {maxAllowed}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          {student.warningResponses.length > 0 ? (
+                            <div className="space-y-1 max-w-xs">
+                              {student.warningResponses.slice(-2).map((wr) => (
+                                <div
+                                  key={wr.id}
+                                  className="flex items-center gap-1.5 text-[11px]"
+                                >
+                                  {wr.responseStatus === 'acknowledged' ? (
+                                    <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold flex items-center gap-1">
+                                      <Check className="w-3 h-3 text-emerald-600" />
+                                      <span>Prompt Ack ({wr.responseTimeSec}s)</span>
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 font-semibold">
+                                      Ignored / Timeout
+                                    </span>
+                                  )}
+                                  <span className="text-slate-500 truncate" title={wr.triggerReason}>
+                                    {wr.triggerReason}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400 italic">No warnings issued</span>
+                          )}
+                        </td>
+
+                        <td className="py-3.5 px-4">{statusBadge}</td>
+
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            onClick={() => setSelectedStudent(student)}
+                            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-lg transition-colors cursor-pointer"
+                          >
+                            View Logs
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Student Detail Warning Log Drawer / Modal */}
       {selectedStudent && (
@@ -1045,6 +1280,109 @@ export const AdminLabManagerPage: React.FC<AdminLabManagerPageProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Safe Delete Confirmation Modal (Protects against accidental lab template deletion) */}
+      {labToDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-red-200">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-red-100 text-red-600 rounded-xl shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Delete Lab Template</h3>
+                <p className="text-xs text-slate-600 mt-1">
+                  Are you sure you want to delete <strong className="text-slate-900">{labToDeleteConfirm.name} ({labToDeleteConfirm.code})</strong>?
+                  This action cannot be undone and will remove all associated rubric policies.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-red-50/70 rounded-xl border border-red-200 text-xs text-red-900 space-y-2">
+              <p className="font-semibold">
+                To prevent accidental deletion, please type <code className="px-1.5 py-0.5 bg-white font-mono font-bold rounded border border-red-300">DELETE</code> below:
+              </p>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="Type DELETE to confirm"
+                className="w-full px-3 py-2 bg-white border border-red-300 rounded-lg text-xs font-mono focus:outline-hidden focus:ring-2 focus:ring-red-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setLabToDeleteConfirm(null);
+                  setDeleteConfirmText('');
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteSafeDelete}
+                disabled={deleteConfirmText.trim() !== 'DELETE'}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-xs rounded-xl shadow-xs cursor-pointer transition-colors"
+              >
+                Permanently Delete Lab
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Broadcast Announcement Modal */}
+      {isBroadcastModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-blue-100 text-blue-600 rounded-xl shrink-0">
+                <Megaphone className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Broadcast Notice to Workstations</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Send an official proctor instruction to all active candidates in this lab session.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-700 block">
+                Announcement Message
+              </label>
+              <textarea
+                value={broadcastMessage}
+                onChange={(e) => setBroadcastMessage(e.target.value)}
+                placeholder="e.g. Please check your network connection; 15 minutes remaining."
+                rows={3}
+                className="w-full p-3 text-xs border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsBroadcastModalOpen(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSendBroadcast}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-xs cursor-pointer"
+              >
+                Send Broadcast
+              </button>
+            </div>
           </div>
         </div>
       )}

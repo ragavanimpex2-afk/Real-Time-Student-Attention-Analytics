@@ -57,6 +57,7 @@ export class AttentionCVEngine {
   private isEyeClosed: boolean = false;
   private eyeClosedStartMs: number = 0;
   private blinkTimestamps: number[] = [];
+  private showMeshOverlay: boolean = false; // By default, keep exam view clean & unobtrusive
 
   // Saccade / gaze shift rate tracking (rapid gaze darting)
   private recentGazeDirections: { dir: GazeDirection; time: number }[] = [];
@@ -145,6 +146,14 @@ export class AttentionCVEngine {
 
   public updateWeights(newWeights: Partial<AttentionWeightsConfig>) {
     this.weights = { ...this.weights, ...newWeights };
+  }
+
+  public setShowMeshOverlay(show: boolean) {
+    this.showMeshOverlay = show;
+  }
+
+  public getShowMeshOverlay(): boolean {
+    return this.showMeshOverlay;
   }
 
   public setCalibrationBaseline(baseline: CalibrationBaseline) {
@@ -1563,6 +1572,61 @@ export class AttentionCVEngine {
     additionalFaces?: CVTelemetryFrame['additional_faces']
   ) {
     if (!box) return;
+
+    // Unobtrusive Exam Proctoring Mode: Avoid distracting the student with heavy wireframes on their face
+    if (!this.showMeshOverlay) {
+      ctx.save();
+      const isBreak = distractionState === 'break_rest' || this.isBreakActive;
+      const isNormal = distractionState === 'focused' || distractionState === 'posture_adjustment';
+      const isDistracted = !isBreak && !isNormal;
+
+      // Small, elegant neutral corner badge with a green status dot
+      const badgeW = 160;
+      const badgeH = 24;
+      const padX = 12;
+      const padY = 12;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.beginPath();
+      // Rounded rect
+      const rad = 6;
+      ctx.roundRect ? ctx.roundRect(padX, padY, badgeW, badgeH, rad) : ctx.rect(padX, padY, badgeW, badgeH);
+      ctx.fill();
+
+      // Dot indicator
+      ctx.fillStyle = isBreak ? '#10B981' : isDistracted ? '#EF4444' : '#10B981';
+      ctx.beginPath();
+      ctx.arc(padX + 12, padY + 12, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Text label
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '600 10px Inter, system-ui, sans-serif';
+      ctx.fillText(
+        isBreak ? 'Break Active' : isDistracted ? 'Distraction Notice' : 'Edge AI Active',
+        padX + 22,
+        padY + 16
+      );
+
+      // Render additional / stranger face alerts only if security breach
+      if (additionalFaces && additionalFaces.length > 0) {
+        for (const af of additionalFaces) {
+          ctx.strokeStyle = '#EF4444';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([4, 4]);
+          ctx.strokeRect(af.x, af.y, af.width, af.height);
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#DC2626';
+          ctx.fillRect(af.x, Math.max(0, af.y - 18), 120, 18);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = '700 9px Inter, sans-serif';
+          ctx.fillText('SECONDARY FACE', af.x + 6, Math.max(12, af.y - 5));
+        }
+      }
+
+      ctx.restore();
+      return;
+    }
 
     const isBreak = distractionState === 'break_rest' || this.isBreakActive;
     const isNormal = distractionState === 'focused' || distractionState === 'posture_adjustment';
