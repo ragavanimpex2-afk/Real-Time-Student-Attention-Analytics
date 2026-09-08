@@ -6,7 +6,7 @@ import { GoogleGenAI } from '@google/genai';
 import Groq from 'groq-sdk';
 import { createServer as createViteServer } from 'vite';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -610,9 +610,16 @@ app.post('/api/ai/insight', async (req, res) => {
 
   const durationMin = Math.round(session_duration / 60);
 
-  // 1. Attempt Groq API (Active production models: llama-3.3-70b-versatile, llama-3.1-8b-instant)
+  // 1. Attempt Groq API (Active models: openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b, llama-3.3-70b-versatile, llama-3.1-8b-instant)
   if (process.env.GROQ_API_KEY) {
-    const groqCandidateModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+    const groqCandidateModels = [
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
+      'qwen/qwen3.8-27b',
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'groq/compound-mini',
+    ];
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const prompt = `You are an academic research assistant for student engagement proxies in educational sessions.
 Analyze these anonymized, aggregated numerical metrics from a ${durationMin}-minute session:

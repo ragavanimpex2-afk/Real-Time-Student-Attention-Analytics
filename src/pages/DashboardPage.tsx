@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Shield, EyeOff, Radio, ArrowRight, Clock, Activity } from 'lucide-react';
+import { Play, Shield, EyeOff, Radio, ArrowRight, Clock, Activity, ChevronRight, Sparkles } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart,
@@ -49,75 +49,92 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       ];
 
   return (
-    <div id="dashboard-page" className="space-y-8 animate-in fade-in duration-200">
-      {/* Page Header */}
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-[#0F172A] tracking-tight">Dashboard</h1>
-        <p className="text-sm text-[#64748B] mt-1">
-          Overview of your recent engagement sessions.
-        </p>
+    <div id="dashboard-page" className="space-y-6 sm:space-y-8 animate-in fade-in duration-200">
+      {/* Page Header with Mobile Action Button */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl sm:text-3xl font-bold text-[#0F172A] tracking-tight">Dashboard</h1>
+          <p className="text-xs sm:text-sm text-[#64748B] mt-0.5 sm:mt-1">
+            Overview of your visual engagement sessions & telemetry.
+          </p>
+        </div>
+
+        {/* Quick Launch Button on Mobile */}
+        <button
+          onClick={onStartLive}
+          className="sm:hidden px-3.5 py-2 bg-blue-600 active:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer min-h-[40px]"
+        >
+          <Play className="w-3.5 h-3.5 fill-white" />
+          <span>Start Live</span>
+        </button>
       </div>
 
-      {/* Top Metric Cards (4-Column Grid) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      {/* Top Metric Cards (Responsive 2-Col Grid on Mobile, 4-Col on Desktop) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         <div
           id="metric-avg-score"
-          className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-2xs"
+          className="bg-white rounded-xl sm:rounded-2xl border border-[#E2E8F0] p-3.5 sm:p-6 shadow-2xs flex flex-col justify-between"
         >
-          <div className="text-[11px] font-bold tracking-wider text-[#64748B] uppercase mb-2">
-            AVERAGE ATTENTION PROXY SCORE
+          <div className="text-[10px] sm:text-[11px] font-bold tracking-wider text-[#64748B] uppercase mb-1.5 sm:mb-2 truncate">
+            AVG ATTENTION SCORE
           </div>
-          <div className="text-4xl font-bold text-[#0F172A] tracking-tight">{avgScore}</div>
+          <div className="flex items-baseline gap-1">
+            <span className="text-2xl sm:text-4xl font-bold text-[#0F172A] tracking-tight">{avgScore}</span>
+            <span className="text-xs sm:text-sm font-semibold text-slate-400">/100</span>
+          </div>
         </div>
 
         <div
           id="metric-sessions"
-          className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-2xs"
+          className="bg-white rounded-xl sm:rounded-2xl border border-[#E2E8F0] p-3.5 sm:p-6 shadow-2xs flex flex-col justify-between"
         >
-          <div className="text-[11px] font-bold tracking-wider text-[#64748B] uppercase mb-2">
-            SESSIONS
+          <div className="text-[10px] sm:text-[11px] font-bold tracking-wider text-[#64748B] uppercase mb-1.5 sm:mb-2 truncate">
+            TOTAL SESSIONS
           </div>
-          <div className="text-4xl font-bold text-[#0F172A] tracking-tight">{totalSessions}</div>
+          <div className="text-2xl sm:text-4xl font-bold text-[#0F172A] tracking-tight">{totalSessions}</div>
         </div>
 
         <div
           id="metric-avg-duration"
-          className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-2xs"
+          className="bg-white rounded-xl sm:rounded-2xl border border-[#E2E8F0] p-3.5 sm:p-6 shadow-2xs flex flex-col justify-between"
         >
-          <div className="text-[11px] font-bold tracking-wider text-[#64748B] uppercase mb-2">
-            AVERAGE SESSION
+          <div className="text-[10px] sm:text-[11px] font-bold tracking-wider text-[#64748B] uppercase mb-1.5 sm:mb-2 truncate">
+            AVG DURATION
           </div>
           <div className="flex items-baseline gap-1">
-            <span className="text-4xl font-bold text-[#0F172A] tracking-tight">{avgDurationMin}</span>
-            <span className="text-lg font-semibold text-[#0F172A]">min</span>
+            <span className="text-2xl sm:text-4xl font-bold text-[#0F172A] tracking-tight">{avgDurationMin}</span>
+            <span className="text-xs sm:text-base font-semibold text-[#0F172A]">min</span>
           </div>
         </div>
 
         <div
           id="metric-distractions"
-          className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-2xs"
+          className="bg-white rounded-xl sm:rounded-2xl border border-[#E2E8F0] p-3.5 sm:p-6 shadow-2xs flex flex-col justify-between"
         >
-          <div className="text-[11px] font-bold tracking-wider text-[#64748B] uppercase mb-2">
-            DISTRACTION EVENTS
+          <div className="text-[10px] sm:text-[11px] font-bold tracking-wider text-[#64748B] uppercase mb-1.5 sm:mb-2 truncate">
+            DISTRACTIONS
           </div>
-          <div className="text-4xl font-bold text-[#0F172A] tracking-tight">{totalDistractions}</div>
+          <div className="text-2xl sm:text-4xl font-bold text-[#0F172A] tracking-tight">{totalDistractions}</div>
         </div>
       </div>
 
       {/* Middle Section: Recent Engagement Chart + System Status */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Left 2 Cols: Recent Engagement Sparkline Card */}
         <div
           id="recent-engagement-card"
-          className="lg:col-span-2 bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-2xs flex flex-col justify-between"
+          className="lg:col-span-2 bg-white rounded-xl sm:rounded-2xl border border-[#E2E8F0] p-4 sm:p-6 shadow-2xs flex flex-col justify-between"
         >
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-bold text-[#0F172A]">Recent Engagement</h2>
-            <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md">
+          <div className="flex items-center justify-between mb-3 sm:mb-4">
+            <div>
+              <h2 className="text-sm sm:text-base font-bold text-[#0F172A]">Recent Engagement</h2>
+              <p className="text-[11px] text-slate-500">Session attention score trajectory</p>
+            </div>
+            <span className="text-[11px] font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md">
               7-Day Trend
             </span>
           </div>
-          <div className="h-48 w-full">
+          <div className="h-36 sm:h-48 w-full min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={trendData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                 <YAxis domain={[0, 100]} hide />
@@ -137,8 +154,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   type="monotone"
                   dataKey="value"
                   stroke="#2563EB"
-                  strokeWidth={4}
-                  dot={false}
+                  strokeWidth={3}
+                  dot={{ r: 3, fill: '#2563EB' }}
+                  activeDot={{ r: 5 }}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -148,26 +166,26 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         {/* Right 1 Col: System Status & Start Live Session CTA */}
         <div
           id="system-status-card"
-          className="bg-white rounded-xl border border-[#E2E8F0] p-6 shadow-2xs flex flex-col justify-between"
+          className="bg-white rounded-xl sm:rounded-2xl border border-[#E2E8F0] p-4 sm:p-6 shadow-2xs flex flex-col justify-between"
         >
           <div>
-            <div className="flex items-center gap-2 mb-4">
-              <Shield className="w-4 h-4 text-[#0F172A]" />
-              <h2 className="text-base font-bold text-[#0F172A]">System Status</h2>
+            <div className="flex items-center gap-2 mb-3 sm:mb-4">
+              <Shield className="w-4 h-4 text-blue-600" />
+              <h2 className="text-sm sm:text-base font-bold text-[#0F172A]">Edge System Status</h2>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2.5 sm:space-y-3">
               <div className="flex items-center gap-2.5 text-xs font-medium text-[#334155]">
-                <span className="w-2 h-2 rounded-full bg-[#16A34A]"></span>
-                <span>Edge Processing Active</span>
+                <span className="w-2 h-2 rounded-full bg-[#16A34A] shrink-0"></span>
+                <span>Edge CV Processing Active</span>
               </div>
               <div className="flex items-center gap-2.5 text-xs font-medium text-[#334155]">
-                <span className="w-2 h-2 rounded-full bg-[#16A34A]"></span>
-                <span>Video Not Stored</span>
+                <span className="w-2 h-2 rounded-full bg-[#16A34A] shrink-0"></span>
+                <span>Zero Video Frames Stored</span>
               </div>
               <div className="flex items-center gap-2.5 text-xs font-medium text-[#334155]">
-                <span className="w-2 h-2 rounded-full bg-[#16A34A]"></span>
-                <span>Anonymous Metrics Only</span>
+                <span className="w-2 h-2 rounded-full bg-[#16A34A] shrink-0"></span>
+                <span>Anonymized Metrics Telemetry</span>
               </div>
             </div>
           </div>
@@ -175,7 +193,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <button
             id="btn-dashboard-start-live"
             onClick={onStartLive}
-            className="w-full mt-6 py-3 px-4 bg-[#2563EB] hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2"
+            className="w-full mt-5 sm:mt-6 py-3 px-4 bg-[#2563EB] hover:bg-blue-700 active:bg-blue-800 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer min-h-[44px]"
           >
             <Play className="w-4 h-4 fill-white" />
             <span>Start Live Session</span>
@@ -183,17 +201,86 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         </div>
       </div>
 
-      {/* Bottom Section: Recent Sessions Table */}
+      {/* Bottom Section: Recent Sessions */}
       <div
         id="recent-sessions-table-card"
-        className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xs overflow-hidden"
+        className="bg-white rounded-xl sm:rounded-2xl border border-[#E2E8F0] shadow-2xs overflow-hidden"
       >
-        <div className="p-6 border-b border-[#E2E8F0] flex items-center justify-between">
-          <h2 className="text-base font-bold text-[#0F172A]">Recent Sessions</h2>
-          <span className="text-xs text-[#64748B] font-medium">Click a row to view telemetry breakdown</span>
+        <div className="p-4 sm:p-6 border-b border-[#E2E8F0] flex items-center justify-between">
+          <div>
+            <h2 className="text-sm sm:text-base font-bold text-[#0F172A]">Recent Sessions</h2>
+            <p className="text-[11px] text-slate-500 sm:hidden">Tap any session for telemetry details</p>
+          </div>
+          <span className="text-xs text-[#64748B] font-medium hidden sm:inline">
+            Click a row to view telemetry breakdown
+          </span>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Mobile View: High-Touch Cards List (< sm) */}
+        <div className="sm:hidden divide-y divide-[#E2E8F0]">
+          {sessions.map((session) => {
+            const score = Math.round(session.average_attention_score);
+            const scoreColor =
+              score >= 75
+                ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                : score >= 50
+                ? 'text-amber-700 bg-amber-50 border-amber-200'
+                : 'text-red-700 bg-red-50 border-red-200';
+
+            const durationText =
+              Math.floor(session.duration_sec / 3600) > 0
+                ? `${Math.floor(session.duration_sec / 3600)}h ${Math.floor(
+                    (session.duration_sec % 3600) / 60
+                  )}m`
+                : `${Math.floor(session.duration_sec / 60)}m`;
+
+            return (
+              <div
+                key={session.id}
+                id={`mobile-session-card-${session.id}`}
+                onClick={() => onSelectSession(session)}
+                className="p-4 active:bg-slate-50 flex items-center justify-between gap-3 cursor-pointer transition-colors min-h-[64px]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-900 truncate">
+                      {session.sessionName}
+                    </span>
+                    {session.cohortClass && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">
+                        {session.cohortClass}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] text-slate-500 mt-1">
+                    <span>
+                      {new Date(session.started_at).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </span>
+                    <span>•</span>
+                    <span>{durationText}</span>
+                    <span>•</span>
+                    <span>{session.distraction_events_count} distractions</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className={`px-2 py-1 rounded-lg text-xs font-bold border ${scoreColor}`}
+                  >
+                    {score}%
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Desktop View: Comprehensive Data Table (>= sm) */}
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0] text-[11px] font-bold text-[#64748B] uppercase tracking-wider">

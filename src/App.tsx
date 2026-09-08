@@ -6,7 +6,7 @@ import {
   PrivacySettings,
 } from './types';
 import { DEFAULT_WEIGHTS } from './lib/cvEngine';
-import { Sidebar, Navbar } from './components/Navigation';
+import { Sidebar, Navbar, MobileDrawer, MobileBottomNav } from './components/Navigation';
 import { SettingsModal } from './components/UIComponents';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -173,6 +173,7 @@ export default function App() {
   });
   const [weights, setWeights] = useState<AttentionWeightsConfig>(DEFAULT_WEIGHTS);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
 
   // Sync sessions to localStorage whenever they change
   useEffect(() => {
@@ -344,6 +345,8 @@ export default function App() {
           onLogout={handleLogout}
           onOpenSettings={() => setIsSettingsOpen(true)}
           isLiveActive={activeTab === 'live'}
+          isMobileDrawerOpen={isMobileDrawerOpen}
+          setIsMobileDrawerOpen={setIsMobileDrawerOpen}
           liveSessionTitle={
             activeTab === 'results' && selectedSession
               ? selectedSession.sessionName
@@ -351,8 +354,20 @@ export default function App() {
           }
         />
 
-        {/* Dynamic Page Content */}
-        <main className="flex-1 p-6 lg:p-10 max-w-7xl w-full mx-auto">
+        {/* Mobile Slide-Out Drawer */}
+        <MobileDrawer
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          user={user}
+          onLogout={handleLogout}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          isLiveActive={activeTab === 'live'}
+          isMobileDrawerOpen={isMobileDrawerOpen}
+          setIsMobileDrawerOpen={setIsMobileDrawerOpen}
+        />
+
+        {/* Dynamic Page Content (with mobile-friendly bottom clearance) */}
+        <main className="flex-1 p-4 sm:p-6 lg:p-10 pb-24 md:pb-8 max-w-7xl w-full mx-auto">
           {activeTab === 'dashboard' && (
             <DashboardPage
               sessions={sessions}
@@ -393,6 +408,13 @@ export default function App() {
 
           {activeTab === 'analytics' && <AnalyticsPage sessions={sessions} />}
         </main>
+
+        {/* Mobile Ergonomic Bottom Tab Navigation */}
+        <MobileBottomNav
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          isLiveActive={activeTab === 'live'}
+        />
       </div>
 
       {/* Formula & Calibration Settings Modal */}
